@@ -1,0 +1,70 @@
+esphome:
+  name: three-buttons-kitchen
+  friendly_name: Three button kitchen
+
+esp8266:
+  board: esp01_1m
+
+# Enable logging
+logger:
+
+# Enable Home Assistant API
+api:
+  encryption:
+    key: "wj0KSvk0U/750IfuQsLzUuq5yx6UcNPPAhxWVZA3o8I="
+
+ota:
+  - platform: esphome
+    password: "c14fc3012feca279fcb13b0eda616288"
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  # Optional manual IP
+  manual_ip:
+    static_ip: 192.168.1.100
+    gateway: 192.168.1.1
+    subnet: 255.255.255.0
+
+
+  # Enable fallback hotspot (captive portal) in case wifi connection fails
+  ap:
+    ssid: "Three-Buttons Fallback Hotspot"
+    password: "hrs0pk9YBOj3"
+
+captive_portal:
+
+binary_sensor:
+  - # D1 at board
+    platform: gpio
+    pin:
+      number: GPIO5
+      mode:
+        input: true
+        pullup: true
+      inverted: true
+    name: Push Button 1
+    filters:
+      - delayed_on_off: 25ms
+  - # D2 at board
+    platform: gpio
+    pin:
+      number: GPIO4
+      mode:
+        input: true
+        pullup: true
+      inverted: true
+    name: Push Button 2
+    filters:
+      - delayed_on_off: 25ms
+  - # D3 at board
+    platform: gpio
+    pin:
+      number: GPIO0
+      mode:
+        input: true
+        pullup: true
+      inverted: true
+    name: Push Button 3
+    filters:
+      - delayed_on_off: 25ms

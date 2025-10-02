@@ -1,0 +1,30 @@
+esphome:
+  name: boiler-room--main-tank
+  friendly_name: Boiler room - main tank
+
+esp8266:
+  board: esp01_1m
+
+# Enable logging
+logger:
+
+# Enable Home Assistant API
+api:
+  encryption:
+    key: "8UAZ0Exj7EUHNW203Olnt3TlYgXTEGVZ7OgamZ0K5n0="
+
+ota:
+  - platform: esphome
+    password: "2cc520540a54ad882d1f99a471a56daf"
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+
+  # Enable fallback hotspot (captive portal) in case wifi connection fails
+  ap:
+    ssid: "Boiler-Room--Main-Tank"
+    password: "fUUaBlKfTjtK"
+
+captive_portal:
+    

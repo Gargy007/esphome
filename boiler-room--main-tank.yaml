@@ -1,0 +1,89 @@
+esphome:
+  name: boiler-room--main-tank
+  friendly_name: Boiler room - main tank
+
+esp8266:
+  board: esp01_1m
+
+# Enable logging
+logger:
+
+# Enable Home Assistant API
+api:
+  encryption:
+    key: "9L/bk2VmBAQsr1AOstQ5VefpNbnjGAEziDRPrTKyEBw="
+
+ota:
+  - platform: esphome
+    password: "259251edf6e7e1e27ce716db258d0e94"
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  # Optional manual IP
+  manual_ip:
+    static_ip: 192.168.1.110
+    gateway: 192.168.1.1
+    subnet: 255.255.255.0
+
+
+  # Enable fallback hotspot (captive portal) in case wifi connection fails
+  ap:
+    ssid: "Boiler-Room--Main-Tank"
+    password: "tMUQtkVnJjVW"
+
+captive_portal:
+
+one_wire:
+  - platform: gpio
+    pin: GPIO2
+# [20:18:24][C][gpio.one_wire:082]:     0x17000005627f4428 (DS18B20)
+# [20:18:24][C][gpio.one_wire:082]:     0xfe00000568a02428 (DS18B20)
+# [20:18:24][C][gpio.one_wire:082]:     0x3a0000055a472428 (DS18B20)
+# [20:18:24][C][gpio.one_wire:082]:     0xcd00000562870528 (DS18B20)
+sensor:
+  - platform: dallas_temp
+    address: 0x3a0000055a472428
+    name: Teplota B1
+    update_interval: 30s
+  - platform: dallas_temp
+    address: 0x17000005627f4428
+    name: Teplota B2
+    update_interval: 30s
+  - platform: dallas_temp
+    address: 0xcd00000562870528
+    name: Teplota B3
+    update_interval: 30s
+  - platform: dallas_temp
+    address: 0xfe00000568a02428
+    name: Teplota B4
+    update_interval: 30s  
+
+output:
+  - platform: gpio
+    pin: GPIO15
+    id: boiler_rele
+  - platform: gpio
+    pin: GPIO5
+    id: boiler_led_yellow
+  - platform: gpio
+    pin: GPIO4
+    id: boiler_led_red
+  - platform: gpio
+    pin: GPIO0
+    id: boiler_led_green
+    
+switch:
+  - platform: output
+    name: Rele
+    output: boiler_rele
+  - platform: output
+    name: LED Yellow
+    output: boiler_led_yellow
+  - platform: output
+    name: LED Red
+    output: boiler_led_red
+  - platform: output
+    name: LED Green
+    output: boiler_led_green
+    

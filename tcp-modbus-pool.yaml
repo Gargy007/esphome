@@ -1,0 +1,372 @@
+esphome:
+  name: tcp-modbus-pool
+  friendly_name: TCP MODBUS POOL
+
+esp32:
+  board: m5stack-atom
+  framework:
+    type: arduino
+
+# Enable logging
+logger:
+
+# Enable Home Assistant API
+api:
+  encryption:
+    key: "KDJ+oVCHHmzYpj3yQW+cN4bksgZ44W/JFEU+9s4EcPQ="
+
+ota:
+  - platform: esphome
+    password: "fbeb2e20eb36e4d19c3e79db16bef4b4"
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+
+  # Optional manual IP
+  manual_ip:
+    static_ip: 192.168.1.120
+    gateway: 192.168.1.1
+    subnet: 255.255.255.0
+
+  # Enable fallback hotspot (captive portal) in case wifi connection fails
+  ap:
+    ssid: "Tcp-Modbus-Pool Fallback Hotspot"
+    password: "T0b8zxGCqYzE"
+
+captive_portal:
+    
+uart:
+  - id: modbus_server
+    tx_pin: 26
+    rx_pin: 32
+    baud_rate: 19200
+
+modbus:
+  - uart_id: modbus_server
+    id: neopool_modbus
+    send_wait_time: 300ms
+    
+
+
+# Modbus TCP connection to NeoPool system
+modbus_controller:
+  - id: neopool_modbus_controller
+    modbus_id: neopool_modbus
+    address: 1
+    
+# MEASURE page sensors (0x0100)
+sensor:
+  - platform: wifi_signal # Reports the WiFi signal strength/RSSI in dB
+    name: "WiFi Signal dB"
+    id: wifi_signal_db
+    update_interval: 10s
+    entity_category: "diagnostic"
+
+  - platform: copy # Reports the WiFi signal strength in %
+    source_id: wifi_signal_db
+    name: "WiFi Signal Percent"
+    filters:
+      - lambda: return min(max(2 * (x + 100.0), 0.0), 100.0);
+    unit_of_measurement: "Signal %"
+    entity_category: "diagnostic"
+    device_class: ""
+    
+  # Hydrolysis current
+  - id: hydro_current
+    platform: modbus_controller
+    name: "Hydrolysis Current"
+    address: 0x0101
+    register_type: holding
+    unit_of_measurement: "A"
+    accuracy_decimals: 2
+  
+  # pH measurement
+  - id: measure_ph
+    platform: modbus_controller
+    name: "PH Level"
+    address: 0x0102
+    register_type: holding
+    device_class: "ph"
+    unit_of_measurement: "pH"
+    accuracy_decimals: 2
+    filters:
+      - lambda: return x / 100.0; # Convert from hundredths    
+  
+  # Redox measurement
+  - id: measure_rx
+    platform: modbus_controller
+    name: "Redox Level"
+    address: 0x0103
+    register_type: holding
+    unit_of_measurement: "mV"
+    accuracy_decimals: 2
+  
+  # Water temperature sensor
+  - id: measure_temperature
+    platform: modbus_controller
+    name: "Water Temperature"
+    address: 0x0106
+    register_type: holding
+    unit_of_measurement: "°C"
+    device_class: "temperature"
+    accuracy_decimals: 1
+    filters:
+      - lambda: return x / 10.0; # Convert from tenths (100 = 10.0°C)
+      
+  # pH Status Register
+  - id: ph_status
+    platform: modbus_controller
+    name: "PH Status Raw"
+    address: 0x0107
+    register_type: holding
+    internal: true    
+    
+  # Redox Status
+  - id: rx_status
+    platform: modbus_controller
+    name: "Redox Status"
+    address: 0x0108
+    register_type: holding
+    internal: true
+    
+  # Hydrolysis voltage
+  - id: hidro_voltage
+    platform: modbus_controller
+    name: "Hydrolysis Cell Voltage"
+    address: 0x0111
+    register_type: holding
+    unit_of_measurement: "V"
+    accuracy_decimals: 1
+    filters:
+      - lambda: return x / 10.0; # Assuming voltage is in tenths
+    
+  - id: relay_state
+    platform: modbus_controller
+    name: "Relay State Raw"
+    address: 0x010E
+    register_type: holding
+    internal: true  # Hide raw value from the UI
+
+  # Hydrolysis production target (read-only)
+  - id: par_hidro
+    platform: modbus_controller
+    name: "Hydrolysis Target"
+    address: 0x0502
+    register_type: holding
+    unit_of_measurement: "%"
+    accuracy_decimals: 0
+    filters:
+      - lambda: return x;  # Keep as-is for direct reading
+
+  # Redox setpoint (read-only)
+  - id: par_rx1
+    platform: modbus_controller
+    name: "Redox Target Value"
+    address: 0x0508
+    register_type: holding
+    unit_of_measurement: "mV"
+    accuracy_decimals: 0
+    filters:
+      - lambda: return x;  # Keep as-is for direct reading
+
+  # Target pH Value (read-only)
+  - id: par_ph1
+    platform: modbus_controller
+    name: "PH Target Value"
+    address: 0x0504
+    register_type: holding
+    unit_of_measurement: "pH"
+    accuracy_decimals: 2
+    filters:
+      - lambda: return x / 100.0;  # Convert from hundredths
+
+  # 24-36V line voltage
+  - id: volt_24_36
+    platform: modbus_controller
+    name: "24-36V Line Voltage"
+    address: 0x0022
+    register_type: holding
+    unit_of_measurement: "V"
+    accuracy_decimals: 2
+    filters:
+      - lambda: return x / 1000.0;  # Convert mV to V
+
+  # 12V line voltage
+  - id: volt_12
+    platform: modbus_controller
+    name: "12V Line Voltage"
+    address: 0x0023
+    register_type: holding
+    unit_of_measurement: "V"
+    accuracy_decimals: 2
+    filters:
+      - lambda: return x / 1000.0;  # Convert mV to V
+
+  # 5V line voltage
+  - id: volt_5
+    platform: modbus_controller
+    name: "5V Line Voltage"
+    address: 0x006A
+    register_type: holding
+    unit_of_measurement: "V"
+    accuracy_decimals: 2
+    filters:
+      - lambda: return x / 1000.0;  # Convert mV to V
+      
+text_sensor:
+  - id: ph_alarm_description
+    platform: template
+    name: "PH Alarm Description"    
+    lambda: |-
+      switch (int(id(ph_status).state) & 0x000F) {  // Extract Bits 0-3
+        case 0: return {"No Alarm"};
+        case 1: return {"PH Too High"};
+        case 2: return {"PH Too Low"};
+        case 3: return {"Pump Exceeded Max Time"};
+        case 4: return {"PH Higher Than Setpoint"};
+        case 5: return {"PH Lower Than Setpoint"};
+        default: return {"Unknown Alarm"};
+      }
+
+  - id: redox_status_description
+    platform: template
+    name: "Redox Status Description"
+    lambda: |-
+      if ((int(id(rx_status).state) & 0x8000) == 0) {
+        return {"Redox Module Not Detected"};
+      } else if ((int(id(rx_status).state) & 0x4000) != 0) {
+        return {"Redox Measurement Active"};
+      } else if ((int(id(rx_status).state) & 0x2000) != 0) {
+        return {"Redox Control Active"};
+      } else if ((int(id(rx_status).state) & 0x1000) != 0) {
+        return {"Redox Pump Active"};
+      } else {
+        return {"Redox Module Idle"};
+      }
+
+binary_sensor:
+
+  # pH Alarm
+  - id: ph_ok
+    platform: template
+    name: "PH OK"
+    lambda: |-
+      return (int(id(ph_status).state) & 0x000F) == 0;  // Bits 0-3    
+    
+  # pH Flow status
+  - id: ph_flow_ok
+    platform: template
+    name: "PH Flow Status"
+    lambda: |-
+      return (int(id(ph_status).state) & 0x0400) != 0;  // Bit 10    
+
+  # pH Control Active
+  - id: ph_control_active
+    platform: template
+    name: "PH Control Active"
+    lambda: |-
+      return (int(id(ph_status).state) & 0x2000) != 0;  // Bit 13    
+      
+  # pH Module Active
+  - id: ph_module_active
+    platform: template
+    name: "PH Module Active"
+    lambda: |-
+      return (int(id(ph_status).state) & 0x4000) != 0;  // Bit 14    
+      
+
+  # Relay 1
+  - id: relay_1
+    platform: template
+    name: "Relay 1 - PH pump"
+    lambda: |-
+      return (int(id(relay_state).state) & 0x0001) != 0;  // Bit 0
+
+  # Relay 2
+  - id: relay_2
+    platform: template
+    name: "Relay 2 - Filtration pump"
+    lambda: |-
+      return (int(id(relay_state).state) & 0x0002) != 0;  // Bit 1
+
+  # Relay 3
+  - id: relay_3
+    platform: template
+    name: "Relay 3"
+    lambda: |-
+      return (int(id(relay_state).state) & 0x0004) != 0;  // Bit 2
+
+  # Relay 4
+  - id: relay_4
+    platform: template
+    name: "Relay 4"
+    lambda: |-
+      return (int(id(relay_state).state) & 0x0008) != 0;  // Bit 3
+
+  # Relay 5
+  - id: relay_5
+    platform: template
+    name: "Relay 5"
+    lambda: |-
+      return (int(id(relay_state).state) & 0x0010) != 0;  // Bit 4
+
+  # Relay 6
+  - id: relay_6
+    platform: template
+    name: "Relay 6"
+    lambda: |-
+      return (int(id(relay_state).state) & 0x0020) != 0;  // Bit 5
+
+  # Relay 7
+  - id: relay_7
+    platform: template
+    name: "Relay 7 - Heat pump enable"
+    lambda: |-
+      return (int(id(relay_state).state) & 0x0040) != 0;  // Bit 6
+
+
+switch:
+  - platform: modbus_controller
+    id: aux3_relay_switch
+    name: "AUX3 Relay"
+    address: 0x010E
+    register_type: holding
+    bitmask: 0x0020  # Bit 5 (adjust if AUX3 is on a different bit)
+    internal: true   # Hide from HA UI
+
+  - platform: modbus_controller
+    id: aux4_relay_switch
+    name: "AUX4 Relay"
+    address: 0x010E
+    register_type: holding
+    bitmask: 0x0040  # Bit 6 (adjust if AUX4 is on a different bit)
+    internal: true   # Hide from HA UI
+
+  # Save to EEPROM (writable switch)
+  - platform: modbus_controller
+    id: save_to_eeprom_switch
+    name: "Save to EEPROM"
+    address: 0x02F0
+    register_type: holding
+    bitmask: 0xFFFF
+    internal: true
+
+  # Execute Changes (writable switch)
+  - platform: modbus_controller
+    id: exec_changes_switch
+    name: "Execute Changes"
+    address: 0x02F5
+    register_type: holding
+    bitmask: 0xFFFF
+    internal: true
+
+  # Manual Mode Enable/Disable (writable switch)
+  - platform: modbus_controller
+    id: manual_mode_switch
+    name: "Manual Relay Mode"
+    address: 0x0475
+    register_type: holding
+    bitmask: 0xFFFF
+    internal: true
+
