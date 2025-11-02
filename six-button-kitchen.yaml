@@ -34,71 +34,268 @@ wifi:
 captive_portal:
 
 
+
 number:
   - platform: template
     name: "Press Threshold"
     id: press_threshold
     optimistic: true
-    min_value: 100
-    max_value: 5000
+    min_value: 200
+    max_value: 1000
     step: 100
     unit_of_measurement: "ms"
-    initial_value: 1000
+    initial_value: 500
+
+
+globals:
+  - id: kuchyne_1_press_start
+    type: unsigned long
+    restore_value: no
+    initial_value: '0'
+  - id: kuchyne_2_press_start
+    type: unsigned long
+    restore_value: no
+    initial_value: '0'
+  - id: obyvak_1_press_start
+    type: unsigned long
+    restore_value: no
+    initial_value: '0'
+  - id: obyvak_2_press_start
+    type: unsigned long
+    restore_value: no
+    initial_value: '0'
+  - id: jidelna_press_start
+    type: unsigned long
+    restore_value: no
+    initial_value: '0'
+
 
 
 binary_sensor:
-  - # D1 at board
-    platform: gpio
+  # D1 - Kuchyně 1
+  - platform: gpio
     pin:
       number: GPIO5
       mode:
         input: true
         pullup: true
       inverted: true
-    name: Vypinač kuchyně 1
+    name: "Kuchyně 1 Raw"
+    id: kuchyne_1_raw
     filters:
       - delayed_on_off: 25ms
-  - # D2 at board
-    platform: gpio
+    on_press:
+      - lambda: |-
+          if (id(kuchyne_1_press_start) == 0) id(kuchyne_1_press_start) = millis();
+    on_release:
+      - lambda: |-
+          unsigned long start = id(kuchyne_1_press_start);
+          if (start == 0) return;
+          unsigned long duration = millis() - start;
+          id(kuchyne_1_press_start) = 0;
+          if (duration < id(press_threshold).state) {
+            id(kuchyne_1_short_press).publish_state(true);
+          }
+
+  - platform: template
+    name: "Kuchyně 1 Short Press"
+    id: kuchyne_1_short_press
+    lambda: |-
+      return false;
+    filters:
+      - delayed_off: 200ms
+
+
+  - platform: template
+    name: "Kuchyně 1 Long Press"
+    lambda: |-
+      if (id(kuchyne_1_raw).state) {
+        // ensure start time is recorded
+        if (id(kuchyne_1_press_start) == 0) id(kuchyne_1_press_start) = millis();
+        // while held, long press becomes true once duration >= threshold
+        return (millis() - id(kuchyne_1_press_start)) >= id(press_threshold).state;
+      } else {
+        // released -> not in long-press state
+        return false;
+      }
+
+
+  # D2 - Kuchyně 2
+  - platform: gpio
     pin:
       number: GPIO4
       mode:
         input: true
         pullup: true
       inverted: true
-    name: Vypinač kuchyně 2
+    name: "Kuchyně 2 Raw"
+    id: kuchyne_2_raw
     filters:
       - delayed_on_off: 25ms
-  - # D5 at board
-    platform: gpio
+    on_press:
+      - lambda: |-
+          if (id(kuchyne_2_press_start) == 0) id(kuchyne_2_press_start) = millis();
+    on_release:
+      - lambda: |-
+          unsigned long start = id(kuchyne_2_press_start);
+          if (start == 0) return;
+          unsigned long duration = millis() - start;
+          id(kuchyne_2_press_start) = 0;
+          if (duration < id(press_threshold).state) {
+            id(kuchyne_2_short_press).publish_state(true);
+          }
+
+  - platform: template
+    name: "Kuchyně 2 Short Press"
+    id: kuchyne_2_short_press
+    lambda: |-
+      return false;
+    filters:
+      - delayed_off: 200ms
+
+
+  - platform: template
+    name: "Kuchyně 2 Long Press"
+    lambda: |-
+      if (id(kuchyne_2_raw).state) {
+        if (id(kuchyne_2_press_start) == 0) id(kuchyne_2_press_start) = millis();
+        return (millis() - id(kuchyne_2_press_start)) >= id(press_threshold).state;
+      } else {
+        return false;
+      }
+
+
+  # D5 - Obývák 1
+  - platform: gpio
     pin:
       number: GPIO14
       mode:
         input: true
         pullup: true
       inverted: true
-    name: Vypinac obyvak 1
+    name: "Obývák 1 Raw"
+    id: obyvak_1_raw
     filters:
       - delayed_on_off: 25ms
-  - # D6 at board
-    platform: gpio
+    on_press:
+      - lambda: |-
+          if (id(obyvak_1_press_start) == 0) id(obyvak_1_press_start) = millis();
+    on_release:
+      - lambda: |-
+          unsigned long start = id(obyvak_1_press_start);
+          if (start == 0) return;
+          unsigned long duration = millis() - start;
+          id(obyvak_1_press_start) = 0;
+          if (duration < id(press_threshold).state) {
+            id(obyvak_1_short_press).publish_state(true);
+          }
+
+  - platform: template
+    name: "Obývák 1 Short Press"
+    id: obyvak_1_short_press
+    lambda: |-
+      return false;
+    filters:
+      - delayed_off: 200ms
+
+
+  - platform: template
+    name: "Obývák 1 Long Press"
+    lambda: |-
+      if (id(obyvak_1_raw).state) {
+        if (id(obyvak_1_press_start) == 0) id(obyvak_1_press_start) = millis();
+        return (millis() - id(obyvak_1_press_start)) >= id(press_threshold).state;
+      } else {
+        return false;
+      }
+
+
+  # D6 - Obývák 2
+  - platform: gpio
     pin:
       number: GPIO12
       mode:
         input: true
         pullup: true
       inverted: true
-    name: Vypinac obyvak 2
+    name: "Obývák 2 Raw"
+    id: obyvak_2_raw
     filters:
       - delayed_on_off: 25ms
-  - # D7 at board
-    platform: gpio
+    on_press:
+      - lambda: |-
+          if (id(obyvak_2_press_start) == 0) id(obyvak_2_press_start) = millis();
+    on_release:
+      - lambda: |-
+          unsigned long start = id(obyvak_2_press_start);
+          if (start == 0) return;
+          unsigned long duration = millis() - start;
+          id(obyvak_2_press_start) = 0;
+          if (duration < id(press_threshold).state) {
+            id(obyvak_2_short_press).publish_state(true);
+          }
+
+  - platform: template
+    name: "Obývák 2 Short Press"
+    id: obyvak_2_short_press
+    lambda: |-
+      return false;
+    filters:
+      - delayed_off: 200ms
+
+
+  - platform: template
+    name: "Obývák 2 Long Press"
+    lambda: |-
+      if (id(obyvak_2_raw).state) {
+        if (id(obyvak_2_press_start) == 0) id(obyvak_2_press_start) = millis();
+        return (millis() - id(obyvak_2_press_start)) >= id(press_threshold).state;
+      } else {
+        return false;
+      }
+
+
+  # D7 - Jídelna
+  - platform: gpio
     pin:
       number: GPIO13
       mode:
         input: true
         pullup: true
       inverted: true
-    name: Vypinac jidelna
+    name: "Jídelna Raw"
+    id: jidelna_raw
     filters:
       - delayed_on_off: 25ms
+    on_press:
+      - lambda: |-
+          if (id(jidelna_press_start) == 0) id(jidelna_press_start) = millis();
+    on_release:
+      - lambda: |-
+          unsigned long start = id(jidelna_press_start);
+          if (start == 0) return;
+          unsigned long duration = millis() - start;
+          id(jidelna_press_start) = 0;
+          if (duration < id(press_threshold).state) {
+            id(jidelna_short_press).publish_state(true);
+          }
+
+  - platform: template
+    name: "Jídelna Short Press"
+    id: jidelna_short_press
+    lambda: |-
+      return false;
+    filters:
+      - delayed_off: 200ms
+
+
+  - platform: template
+    name: "Jídelna Long Press"
+    lambda: |-
+      if (id(jidelna_raw).state) {
+        if (id(jidelna_press_start) == 0) id(jidelna_press_start) = millis();
+        return (millis() - id(jidelna_press_start)) >= id(press_threshold).state;
+      } else {
+        return false;
+      }
+
