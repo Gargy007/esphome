@@ -83,7 +83,7 @@ binary_sensor:
     name: "Kuchyně 1 Raw"
     id: kuchyne_1_raw
     filters:
-      - delayed_on_off: 25ms
+      - delayed_on_off: 35ms
     on_press:
       - lambda: |-
           if (id(kuchyne_1_press_start) == 0) id(kuchyne_1_press_start) = millis();
@@ -131,7 +131,7 @@ binary_sensor:
     name: "Kuchyně 2 Raw"
     id: kuchyne_2_raw
     filters:
-      - delayed_on_off: 25ms
+      - delayed_on_off: 35ms
     on_press:
       - lambda: |-
           if (id(kuchyne_2_press_start) == 0) id(kuchyne_2_press_start) = millis();
@@ -176,7 +176,7 @@ binary_sensor:
     name: "Obývák 1 Raw"
     id: obyvak_1_raw
     filters:
-      - delayed_on_off: 25ms
+      - delayed_on_off: 35ms
     on_press:
       - lambda: |-
           if (id(obyvak_1_press_start) == 0) id(obyvak_1_press_start) = millis();
@@ -221,7 +221,7 @@ binary_sensor:
     name: "Obývák 2 Raw"
     id: obyvak_2_raw
     filters:
-      - delayed_on_off: 25ms
+      - delayed_on_off: 35ms
     on_press:
       - lambda: |-
           if (id(obyvak_2_press_start) == 0) id(obyvak_2_press_start) = millis();
@@ -266,7 +266,7 @@ binary_sensor:
     name: "Jídelna Raw"
     id: jidelna_raw
     filters:
-      - delayed_on_off: 25ms
+      - delayed_on_off: 35ms
     on_press:
       - lambda: |-
           if (id(jidelna_press_start) == 0) id(jidelna_press_start) = millis();

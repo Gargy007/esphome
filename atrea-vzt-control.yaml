@@ -1,0 +1,326 @@
+esphome:
+  name: atrea-vzt-control
+  friendly_name: ATREA VZT CONTROL
+  platformio_options:
+    board_build.flash_mode: dio # Often required for S3
+  
+  on_boot:
+    priority: 800 # Spustí se krátce po inicializaci výstupů
+    then:
+      - output.set_level:
+          id: dac_vystup_1
+          level: 0%
+      - output.set_level:
+          id: dac_vystup_2
+          level: 0%
+
+esp32:
+  board: esp32-s3-devkitc-1
+  framework:
+    type: esp-idf
+
+# Enable logging
+logger:
+
+# Enable Home Assistant API
+api:
+  encryption:
+    key: "Rp3q+Z7Zs2JenCzE6cRuYInlmGhhkqEKVyFD7C7mMuU="
+
+ota:
+  - platform: esphome
+    password: "86553fa93f668f5e9729a7365b2479a6"
+
+# Enable Ethernet
+ethernet:
+  type: W5500
+  clk_pin: GPIO13
+  mosi_pin: GPIO11
+  miso_pin: GPIO12
+  cs_pin: GPIO14
+  interrupt_pin: GPIO10
+  reset_pin: GPIO09 # Adjust based on board, sometimes unnecessary
+  # Optional manual IP
+  manual_ip:
+    static_ip: 192.168.1.115
+    gateway: 192.168.1.1
+    subnet: 255.255.255.0
+
+one_wire:
+  - platform: gpio
+    pin: GPIO16
+
+# [10:04:12.048][C][gpio.one_wire:088]:     0x620623b2dc5aa828 (DS18B20)
+# [10:04:12.051][C][gpio.one_wire:088]:     0xbe0624c10c0c3828 (DS18B20)
+# [10:04:12.055][C][gpio.one_wire:088]:     0xa80623b0191bf928 (DS18B20)
+# [10:04:12.055][C][gpio.one_wire:088]:     0xdf0923b09c4c2b28 (DS18B20)
+# [10:04:12.058][C][gpio.one_wire:088]:     0xb70623b02c078728 (DS18B20)
+# [10:04:12.063][C][gpio.one_wire:088]:     0x460000055a39a728 (DS18B20)
+sensor:
+  - platform: dallas_temp
+    address: 0xbe0624c10c0c3828
+    name: Teplota - Rekuperace - Vstup do domu
+    update_interval: 30s
+  - platform: dallas_temp
+    address: 0xdf0923b09c4c2b28
+    name:  Teplota - Rekuperace - Vystup z domu
+    update_interval: 30s
+  - platform: dallas_temp
+    address: 0x460000055a39a728
+    name:  Teplota - Rekuperace - Vystup do bytu
+    update_interval: 30s
+  - platform: dallas_temp
+    address: 0xb70623b02c078728
+    name:  Teplota - Rekuperace - Vrat z bytu
+    update_interval: 30s
+  - platform: dallas_temp
+    address: 0xa80623b0191bf928
+    name:  Teplota - VZT - Vystup do bytu
+    update_interval: 30s
+  - platform: dallas_temp
+    address: 0x620623b2dc5aa828
+    name:  Teplota - VZT - Vrat z bytu (cirkulace)
+    update_interval: 30s
+
+  - platform: adc
+    pin: GPIO02
+    name: "Rozdíl tlaku na filtru"
+    id: pressure_diff_at_filter
+    # Nastavení pro maximální přesnost na ESP32-S3
+    attenuation: 11db  # Umožní číst až do 3.1V (při 3.3V VCC)
+    update_interval: 1s
+    unit_of_measurement: "Pa"
+    device_class: pressure
+    state_class: measurement
+    accuracy_decimals: 1
+
+    filters:
+      # 1. Odstranění šumu průměrováním z 15 vzorků (zpomalí odezvu, zvýší stabilitu)
+      - sliding_window_moving_average:
+          window_size: 15
+          send_every: 1
+      
+      # 2. Tvůj kalibrovaný vzorec
+      - lambda: |-
+          ESP_LOGD("custom", "Vstupni napeti z delice: %.3f V", x);
+          return (x - 1.7287) * 1500.0;
+      
+      # 3. Odstřižení šumu kolem nuly (pokud je hodnota +- 2 Pa, pošle 0)
+      - lambda: |-
+          if (abs(x) < 2.0) return 0.0;
+          else return x;
+          
+output:
+  - platform: gpio
+    pin: 
+      number: GPIO45
+      mode:
+        output: true
+        pullup: true
+        pulldown: false
+      inverted: false  # Keeps active-low relay OFF on boot
+    id: gpio_rele_nabijeni
+  - platform: gpio
+    pin: 
+      number: GPIO46
+      mode:
+        output: true
+        pullup: true
+        pulldown: false
+      inverted: false  # Keeps active-low relay OFF on boot
+    id: gpio_rele_no
+  - platform: gpio
+    pin: 
+      number: GPIO47
+      mode:
+        output: true
+        pullup: true
+        pulldown: false
+      inverted: false  # Keeps active-low relay OFF on boot
+    id: gpio_rele_230v_1
+  - platform: gpio
+    pin: 
+      number: GPIO48
+      mode:
+        output: true
+        pullup: true
+        pulldown: false
+      inverted: false  # Keeps active-low relay OFF on boot
+    id: gpio_rele_230v_2
+  - platform: gpio
+    pin: 
+      number: GPIO21
+      mode:
+        output: true
+        pullup: true
+        pulldown: false
+      inverted: false  # Keeps active-low relay OFF on boot
+    id: gpio_rele_d4_control_230v
+  
+  
+  - platform: gpio
+    pin: GPIO03
+    id: gpio_led_red
+  - platform: gpio
+    pin: GPIO15
+    id: gpio_led_green
+
+  - platform: mcp4725
+    id: dac_vystup_1
+    address: 0x60 # ADDR pin na GND
+
+  - platform: mcp4725
+    id: dac_vystup_2
+    address: 0x61 # ADDR pin na 5V (VCC)
+
+switch:
+  - platform: output
+    name: LED Red
+    output: gpio_led_red
+    id: switch_led_red
+    internal: True
+  - platform: output
+    name: LED Green
+    output: gpio_led_green
+    id: switch_led_green
+    internal: True
+  - platform: output
+    name: Relé nabijení tablet
+    output: gpio_rele_nabijeni
+    id: switch_rele_nabijeni
+  - platform: output
+    name: Relé NO
+    output: gpio_rele_no
+    id: switch_rele_no
+  - platform: output
+    name: Relé 230V 1
+    output: gpio_rele_230v_1
+    id: switch_rele_230v_1
+  - platform: output
+    name: Relé 230V 2
+    output: gpio_rele_230v_2
+    id: switch_rele_230v_2
+  - platform: output
+    name: Relé ovladání větrání D4
+    output: gpio_rele_d4_control_230v
+    id: switch_rele_d4_control_230v
+    
+
+binary_sensor:
+  - # D1 at board
+    platform: gpio
+    pin:
+      number: GPIO42
+      mode:
+        input: true
+        pullup: true
+      inverted: true
+    name: HV vstup větrání 1
+    filters:
+      - delayed_on_off: 25ms
+  - # D2 at board
+    platform: gpio
+    pin:
+      number: GPIO41
+      mode:
+        input: true
+        pullup: true
+      inverted: true
+    name: HV vstup větrání 2
+    filters:
+      - delayed_on_off: 25ms
+  - # D3 at board
+    platform: gpio
+    pin:
+      number: GPIO40
+      mode:
+        input: true
+        pullup: true
+      inverted: true
+    name: HV vstup větrání 3
+    filters:
+      - delayed_on_off: 25ms
+  - # D4 at board
+    platform: gpio
+    pin:
+      number: GPIO39
+      mode:
+        input: true
+        pullup: true
+      inverted: true
+    name: HV vstup větrání kuchyň
+    filters:
+      - delayed_on_off: 25ms
+
+
+  # Optional: Display IP in Logs
+text_sensor:
+  - platform: ethernet_info
+    ip_address:
+      name: "IP Address"
+
+i2c:
+  sda: GPIO1
+  scl: GPIO0
+  frequency: 100kHz
+  scan: true
+
+# Vytvoření entit v Home Assistant (např. jako čísla 0-100%)
+number:
+  - platform: template
+    name: "Servo 1 Ovládání"
+    min_value: 0
+    max_value: 100
+    step: 1
+    unit_of_measurement: "%"
+    set_action:
+      then:
+        - output.set_level:
+            id: dac_vystup_1
+            level: !lambda 'return x / 100.0f;'
+
+  - platform: template
+    name: "Servo 2 Ovládání"
+    min_value: 0
+    max_value: 100
+    step: 1
+    unit_of_measurement: "%"
+    set_action:
+      then:
+        - output.set_level:
+            id: dac_vystup_2
+            level: !lambda 'return x / 100.0f;'
+
+
+uart:
+  id: lin_test_bus
+  tx_pin: GPIO17
+  rx_pin: GPIO18
+  baud_rate: 9600
+  # Toto zapne automatické vypisování všeho, co přijde/odejde, do logu
+  
+  debug:  
+    dummy_receiver: true
+    direction: BOTH
+
+interval:
+  - interval: 1s
+    then:
+      - if:
+          condition:
+            api.connected:
+          then:
+            - switch.turn_on: switch_led_green
+            - switch.turn_off: switch_led_red
+          else:
+            - switch.turn_on: switch_led_red
+            - switch.turn_off: switch_led_green
+            - delay: 500ms
+            - switch.turn_on: switch_led_green
+            - switch.turn_off: switch_led_red
+            - delay: 500ms
+  - interval: 2s
+    then:
+      - uart.write: "Ahoj pres LIN\r\n"
+      - logger.log: "Zprava odeslana na TX..."
+

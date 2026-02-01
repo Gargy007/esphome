@@ -1,6 +1,6 @@
 esphome:
-  name: boiler-room--main-tank
-  friendly_name: Boiler room - main tank
+  name: boiler-room-gas-sun
+  friendly_name: Boiler room - Gas and Sun panels
 
 esp8266:
   board: esp01_1m
@@ -22,55 +22,63 @@ wifi:
   password: !secret wifi_password
   # Optional manual IP
   manual_ip:
-    static_ip: 192.168.1.110
+    static_ip: 192.168.1.112
     gateway: 192.168.1.1
     subnet: 255.255.255.0
 
 
   # Enable fallback hotspot (captive portal) in case wifi connection fails
   ap:
-    ssid: "Boiler-Room--Main-Tank"
+    ssid: "Boiler-Room-Gas-Sun"
     password: "tMUQtkVnJjVW"
 
 captive_portal:
 
+
+
+# [12:44:29.538][C][gpio.one_wire:086]:     0x29000003ea397228 (DS18B20) Tepla voda solar
+# [12:44:29.539][C][gpio.one_wire:086]:     0xe1000003ea1cbe28 (DS18B20) Vrat solar
+# [14:09:41.608][C][gpio.one_wire:086]:     0xf70000006cd75d28 (DS18B20) Teplota uzitkove vody (za smesovacem)
+
 one_wire:
   - platform: gpio
     pin: GPIO2
-# [20:18:24][C][gpio.one_wire:082]:     0x17000005627f4428 (DS18B20)
-# [20:18:24][C][gpio.one_wire:082]:     0xfe00000568a02428 (DS18B20)
-# [20:18:24][C][gpio.one_wire:082]:     0x3a0000055a472428 (DS18B20)
-# [20:18:24][C][gpio.one_wire:082]:     0xcd00000562870528 (DS18B20)
+
 sensor:
   - platform: dallas_temp
-    address: 0x3a0000055a472428
-    name: Teplota B1
+    address: 0x29000003ea397228
+    name: Teplota - Solar vstup (tepla voda)
     update_interval: 30s
   - platform: dallas_temp
-    address: 0x17000005627f4428
-    name: Teplota B2
+    address: 0xe1000003ea1cbe28
+    name: Teplota - Solar> vrat
     update_interval: 30s
   - platform: dallas_temp
-    address: 0xcd00000562870528
-    name: Teplota B3
-    update_interval: 30s
-  - platform: dallas_temp
-    address: 0xfe00000568a02428
-    name: Teplota B4
-    update_interval: 30s  
+    address: 0xf70000006cd75d28
+    name: Teplota - Uzitkova voda - za smesovacem
+    update_interval: 15s
+  # - platform: dallas_temp
+  #   address: 0x60000003ea354528 # Jeste neurceno
+  #   name: Teplota - Kotel> vrat
+  #   update_interval: 30s  
+  # - platform: dallas_temp
+  #   address: 0xb800000559ebf028
+  #   name: Teplota - Test
+  #   update_interval: 30s  
+     
 
 output:
   - platform: gpio
     pin: GPIO15
     id: gpio_rele
   - platform: gpio
-    pin: GPIO5
+    pin: GPIO0
     id: gpio_led_yellow
   - platform: gpio
-    pin: GPIO4
+    pin: GPIO5
     id: gpio_led_red
   - platform: gpio
-    pin: GPIO0
+    pin: GPIO4
     id: gpio_led_green
     
 switch:
@@ -132,7 +140,7 @@ interval:
         else:
           - switch.turn_off: switch_led_green
           - switch.turn_on: switch_led_red
-          - switch.turn_on: switch_rele
           - delay: 500ms
           - switch.turn_off: switch_led_red
           - delay: 500ms
+    

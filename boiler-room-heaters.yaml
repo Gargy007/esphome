@@ -1,6 +1,6 @@
 esphome:
-  name: boiler-room--main-tank
-  friendly_name: Boiler room - main tank
+  name: boiler-room-heaters
+  friendly_name: Boiler room - heaters
 
 esp8266:
   board: esp01_1m
@@ -22,42 +22,49 @@ wifi:
   password: !secret wifi_password
   # Optional manual IP
   manual_ip:
-    static_ip: 192.168.1.110
+    static_ip: 192.168.1.111
     gateway: 192.168.1.1
     subnet: 255.255.255.0
 
 
   # Enable fallback hotspot (captive portal) in case wifi connection fails
   ap:
-    ssid: "Boiler-Room--Main-Tank"
+    ssid: "Boiler-Room-Heaters"
     password: "tMUQtkVnJjVW"
 
 captive_portal:
 
+# 0x3c00000559fe8628 (DS18B20) OK
+# 0xfb000003ea4ce628 (DS18B20) OK
+# 0x60000003ea354528 (DS18B20) OK
+# 0x0f00000559c87528 (DS18B20) OK
+
 one_wire:
   - platform: gpio
     pin: GPIO2
-# [20:18:24][C][gpio.one_wire:082]:     0x17000005627f4428 (DS18B20)
-# [20:18:24][C][gpio.one_wire:082]:     0xfe00000568a02428 (DS18B20)
-# [20:18:24][C][gpio.one_wire:082]:     0x3a0000055a472428 (DS18B20)
-# [20:18:24][C][gpio.one_wire:082]:     0xcd00000562870528 (DS18B20)
+
 sensor:
   - platform: dallas_temp
-    address: 0x3a0000055a472428
-    name: Teplota B1
+    address: 0x3c00000559fe8628
+    name: Teplota - Plynovy kotel> vystup
     update_interval: 30s
   - platform: dallas_temp
-    address: 0x17000005627f4428
-    name: Teplota B2
+    address: 0x0f00000559c87528
+    name: Teplota - Plynovy kotel> vrat
     update_interval: 30s
   - platform: dallas_temp
-    address: 0xcd00000562870528
-    name: Teplota B3
+    address: 0xfb000003ea4ce628 # Jeste neurceno
+    name: Teplota - Kotel> Vystup
     update_interval: 30s
   - platform: dallas_temp
-    address: 0xfe00000568a02428
-    name: Teplota B4
+    address: 0x60000003ea354528 # Jeste neurceno
+    name: Teplota - Kotel> vrat
     update_interval: 30s  
+  # - platform: dallas_temp
+  #   address: 0xb800000559ebf028
+  #   name: Teplota - Test
+  #   update_interval: 30s  
+     
 
 output:
   - platform: gpio
@@ -136,3 +143,4 @@ interval:
           - delay: 500ms
           - switch.turn_off: switch_led_red
           - delay: 500ms
+    
