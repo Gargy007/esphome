@@ -136,12 +136,6 @@ one_wire:
 
 
 sensor:
-# [10:04:12.048][C][gpio.one_wire:088]:     0x620623b2dc5aa828 (DS18B20)
-# [10:04:12.051][C][gpio.one_wire:088]:     0xbe0624c10c0c3828 (DS18B20)
-# [10:04:12.055][C][gpio.one_wire:088]:     0xa80623b0191bf928 (DS18B20)
-# [10:04:12.055][C][gpio.one_wire:088]:     0xdf0923b09c4c2b28 (DS18B20)
-# [10:04:12.058][C][gpio.one_wire:088]:     0xb70623b02c078728 (DS18B20)
-# [10:04:12.063][C][gpio.one_wire:088]:     0x460000055a39a728 (DS18B20)
   - platform: dallas_temp
     address: 0xbe0624c10c0c3828
     name: Teplota - Rekuperace - Vstup do domu
@@ -313,88 +307,65 @@ switch:
     
 
 binary_sensor:
-  - # D1 at board
-    # WC PŘÍZEMÍ (se zpožděním a doběhem)
+  - # D1 - WC PŘÍZEMÍ
     platform: gpio
     id: vzt_wc_prizemi
-    pin:
-      number: GPIO42
-      mode:
-        input: true
-        pullup: true
-      inverted: true
-    
-    name: HV vstup větrání WC přízemí
-    filters:
-      - delayed_on_off: 25ms
-
+    pin: {number: GPIO42, mode: {input: true, pullup: true}, inverted: true}
+    name: "HV vstup větrání WC přízemí"
+    filters: [{delayed_on_off: 25ms}]
     on_press:
       then:
-        - script.execute: script_safety_watchdog # Restartuj 2h odpočet
+        - script.execute: script_safety_watchdog
         - script.execute: script_wc_logic
     on_release:
       then:
-        - script.execute: script_safety_watchdog # Restartuj 2h odpočet
+        - script.execute: script_safety_watchdog
         - script.execute: script_wc_overrun
-    
 
-  - # D2 at board
-    # WC PATRO (stejná logika jako přízemí)
+  - # D2 - WC PATRO
     platform: gpio
     id: vzt_wc_patro
-    pin:
-      number: GPIO41
-      mode:
-        input: true
-        pullup: true
-      inverted: true
-    name: HV vstup větrání WC patro
-    filters:
-      - delayed_on_off: 25ms
+    pin: {number: GPIO41, mode: {input: true, pullup: true}, inverted: true}
+    name: "HV vstup větrání WC patro"
+    filters: [{delayed_on_off: 25ms}]
     on_press:
       then:
-        - script.execute: script_safety_watchdog # Restartuj 2h odpočet
+        - script.execute: script_safety_watchdog
         - script.execute: script_wc_logic
     on_release:
       then:
-        - script.execute: script_safety_watchdog # Restartuj 2h odpočet
+        - script.execute: script_safety_watchdog
         - script.execute: script_wc_overrun
 
-  - # D3 at board - KOUPELNA
+  - # D3 - KOUPELNA
     platform: gpio
     id: vzt_koupelna
-    pin:
-      number: GPIO40
-      mode: {input: true, pullup: true}
-      inverted: true
+    pin: {number: GPIO40, mode: {input: true, pullup: true}, inverted: true}
     name: "HV vstup větrání Koupelna"
     filters: [{delayed_on_off: 25ms}]
     on_press:
       then:
-        - script.execute: script_safety_watchdog # Restartuj 2h odpočet
         - script.stop: script_bath_overrun
+        - script.execute: script_safety_watchdog
         - switch.turn_on: switch_rele_d4_control_230v
     on_release:
       then:
-        - script.execute: script_safety_watchdog # Restartuj 2h odpočet
+        - script.execute: script_safety_watchdog
         - script.execute: script_bath_overrun
 
-  - # D4 at board - KUCHYŇ
+  - # D4 - KUCHYŇ
     platform: gpio
     id: vzt_kuchyn
-    pin:
-      number: GPIO39
-      mode: {input: true, pullup: true}
-      inverted: true
+    pin: {number: GPIO39, mode: {input: true, pullup: true}, inverted: true}
     name: "HV vstup větrání kuchyň"
     filters: [{delayed_on_off: 25ms}]
     on_press:
       then:
-        - script.execute: script_safety_watchdog # Restartuj 2h odpočet
+        - script.execute: script_safety_watchdog
         - switch.turn_on: switch_rele_d4_control_230v
     on_release:
       then:
-        - script.execute: script_safety_watchdog # Restartuj 2h odpočet
+        - script.execute: script_safety_watchdog
         - script.execute: script_global_turn_off_check
 
 
@@ -452,7 +423,6 @@ number:
     step: 1
     initial_value: 60
     unit_of_measurement: "s"
-    mode: box
     optimistic: true
     restore_value: true
 
@@ -464,7 +434,6 @@ number:
     step: 1
     initial_value: 300
     unit_of_measurement: "s"
-    mode: box
     optimistic: true
     restore_value: true
 
@@ -476,7 +445,6 @@ number:
     step: 1
     initial_value: 300
     unit_of_measurement: "s"
-    mode: box
     optimistic: true
     restore_value: true
 
