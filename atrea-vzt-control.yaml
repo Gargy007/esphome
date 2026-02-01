@@ -18,6 +18,17 @@ esp32:
   board: esp32-s3-devkitc-1
   framework:
     type: esp-idf
+  
+globals:
+  - id: last_ventilation_unix
+    type: int
+    restore_value: yes
+    initial_value: '0'
+  
+  - id: last_ventilation_millis
+    type: uint32_t
+    restore_value: no
+    initial_value: '0'
 
 # Enable logging
 logger:
@@ -25,11 +36,22 @@ logger:
 # Enable Home Assistant API
 api:
   encryption:
-    key: "Rp3q+Z7Zs2JenCzE6cRuYInlmGhhkqEKVyFD7C7mMuU="
+    key: !secret api_encryption
+  # Spustí se, jakmile se Home Assistant (nebo jiný klient) připojí
+  on_client_connected:
+    then:
+      - switch.turn_on: switch_led_green
+      - switch.turn_off: switch_led_red
+
+  # Spustí se okamžitě při ztrátě spojení
+  on_client_disconnected:
+    then:
+      - switch.turn_on: switch_led_red
+      - switch.turn_off: switch_led_green
 
 ota:
   - platform: esphome
-    password: "86553fa93f668f5e9729a7365b2479a6"
+    password: !secret ota_password
 
 # Enable Ethernet
 ethernet:
@@ -46,17 +68,80 @@ ethernet:
     gateway: 192.168.1.1
     subnet: 255.255.255.0
 
+time:
+  - platform: sntp
+    id: sntp_time
+    timezone: "Europe/Prague"
+
+script:
+  # Watchdog na vetrani, maximalne dve hodiny behu
+  - id: script_safety_watchdog
+    mode: restart # Klíčové: restartuje odpočet při každém zavolání
+    then:
+      - delay: 7200s
+      - logger.log: "BEZPEČNOSTNÍ POJISTKA: Větrání běželo 2 hodiny bez změny, vypínám."
+      - switch.turn_off: switch_rele_d4_control_230v
+      - globals.set:
+          id: last_ventilation_unix
+          value: !lambda 'return id(sntp_time).now().timestamp;'
+      - globals.set:
+          id: last_ventilation_millis
+          value: !lambda 'return millis() / 1000;'
+
+  # Skript pro bezpečné vypnutí a zápis do globals
+  - id: script_global_turn_off_check
+    then:
+      - if:
+          condition: # Vypni jen když jsou VŠECHNY vstupy fyzicky vypnuté
+            and:
+              - binary_sensor.is_off: vzt_wc_prizemi
+              - binary_sensor.is_off: vzt_wc_patro
+              - binary_sensor.is_off: vzt_koupelna
+              - binary_sensor.is_off: vzt_kuchyn
+              - switch.is_off: switch_ha_externi
+          then:
+            - script.stop: script_safety_watchdog # ZASTAV POJISTKU, je korektně vypnuto
+            - switch.turn_off: switch_rele_d4_control_230v
+            - globals.set:
+                id: last_ventilation_unix
+                value: !lambda 'return id(sntp_time).now().timestamp;'
+            - globals.set:
+                id: last_ventilation_millis
+                value: !lambda 'return millis() / 1000;'
+            - logger.log: "Větrání vypnuto, časy uloženy."
+
+  - id: script_wc_logic
+    mode: restart
+    then:
+      - delay: !lambda "return id(wc_delay_start).state * 1000;"
+      - switch.turn_on: switch_rele_d4_control_230v
+
+  - id: script_wc_overrun
+    mode: restart
+    then:
+      - delay: !lambda "return id(wc_run_over).state * 1000;"
+      - script.execute: script_global_turn_off_check
+
+  - id: script_bath_overrun
+    mode: restart
+    then:
+      - delay: !lambda "return id(bath_run_over).state * 1000;"
+      - script.execute: script_global_turn_off_check
+
+
+
 one_wire:
   - platform: gpio
     pin: GPIO16
 
+
+sensor:
 # [10:04:12.048][C][gpio.one_wire:088]:     0x620623b2dc5aa828 (DS18B20)
 # [10:04:12.051][C][gpio.one_wire:088]:     0xbe0624c10c0c3828 (DS18B20)
 # [10:04:12.055][C][gpio.one_wire:088]:     0xa80623b0191bf928 (DS18B20)
 # [10:04:12.055][C][gpio.one_wire:088]:     0xdf0923b09c4c2b28 (DS18B20)
 # [10:04:12.058][C][gpio.one_wire:088]:     0xb70623b02c078728 (DS18B20)
 # [10:04:12.063][C][gpio.one_wire:088]:     0x460000055a39a728 (DS18B20)
-sensor:
   - platform: dallas_temp
     address: 0xbe0624c10c0c3828
     name: Teplota - Rekuperace - Vstup do domu
@@ -102,13 +187,22 @@ sensor:
       
       # 2. Tvůj kalibrovaný vzorec
       - lambda: |-
-          ESP_LOGD("custom", "Vstupni napeti z delice: %.3f V", x);
           return (x - 1.7287) * 1500.0;
       
       # 3. Odstřižení šumu kolem nuly (pokud je hodnota +- 2 Pa, pošle 0)
       - lambda: |-
           if (abs(x) < 2.0) return 0.0;
           else return x;
+  
+  - platform: template
+    name: "VZT - Sekundy od posledního běhu"
+    id: vzt_seconds_since_last
+    unit_of_measurement: "s"
+    icon: "mdi:timer-outline"
+    update_interval: 10s
+    lambda: |-
+      if (id(last_ventilation_millis) == 0) return 0;
+      return (millis() / 1000) - id(last_ventilation_millis);
           
 output:
   - platform: gpio
@@ -204,53 +298,104 @@ switch:
     name: Relé ovladání větrání D4
     output: gpio_rele_d4_control_230v
     id: switch_rele_d4_control_230v
+  - platform: template
+    name: "VZT - HA Externí požadavek"
+    id: switch_ha_externi
+    optimistic: true
+    on_turn_on:
+      then:
+        - script.execute: script_safety_watchdog
+        - switch.turn_on: switch_rele_d4_control_230v
+    on_turn_off:
+      then:
+        - script.execute: script_safety_watchdog
+        - script.execute: script_global_turn_off_check
     
 
 binary_sensor:
   - # D1 at board
+    # WC PŘÍZEMÍ (se zpožděním a doběhem)
     platform: gpio
+    id: vzt_wc_prizemi
     pin:
       number: GPIO42
       mode:
         input: true
         pullup: true
       inverted: true
-    name: HV vstup větrání 1
+    
+    name: HV vstup větrání WC přízemí
     filters:
       - delayed_on_off: 25ms
+
+    on_press:
+      then:
+        - script.execute: script_safety_watchdog # Restartuj 2h odpočet
+        - script.execute: script_wc_logic
+    on_release:
+      then:
+        - script.execute: script_safety_watchdog # Restartuj 2h odpočet
+        - script.execute: script_wc_overrun
+    
+
   - # D2 at board
+    # WC PATRO (stejná logika jako přízemí)
     platform: gpio
+    id: vzt_wc_patro
     pin:
       number: GPIO41
       mode:
         input: true
         pullup: true
       inverted: true
-    name: HV vstup větrání 2
+    name: HV vstup větrání WC patro
     filters:
       - delayed_on_off: 25ms
-  - # D3 at board
+    on_press:
+      then:
+        - script.execute: script_safety_watchdog # Restartuj 2h odpočet
+        - script.execute: script_wc_logic
+    on_release:
+      then:
+        - script.execute: script_safety_watchdog # Restartuj 2h odpočet
+        - script.execute: script_wc_overrun
+
+  - # D3 at board - KOUPELNA
     platform: gpio
+    id: vzt_koupelna
     pin:
       number: GPIO40
-      mode:
-        input: true
-        pullup: true
+      mode: {input: true, pullup: true}
       inverted: true
-    name: HV vstup větrání 3
-    filters:
-      - delayed_on_off: 25ms
-  - # D4 at board
+    name: "HV vstup větrání Koupelna"
+    filters: [{delayed_on_off: 25ms}]
+    on_press:
+      then:
+        - script.execute: script_safety_watchdog # Restartuj 2h odpočet
+        - script.stop: script_bath_overrun
+        - switch.turn_on: switch_rele_d4_control_230v
+    on_release:
+      then:
+        - script.execute: script_safety_watchdog # Restartuj 2h odpočet
+        - script.execute: script_bath_overrun
+
+  - # D4 at board - KUCHYŇ
     platform: gpio
+    id: vzt_kuchyn
     pin:
       number: GPIO39
-      mode:
-        input: true
-        pullup: true
+      mode: {input: true, pullup: true}
       inverted: true
-    name: HV vstup větrání kuchyň
-    filters:
-      - delayed_on_off: 25ms
+    name: "HV vstup větrání kuchyň"
+    filters: [{delayed_on_off: 25ms}]
+    on_press:
+      then:
+        - script.execute: script_safety_watchdog # Restartuj 2h odpočet
+        - switch.turn_on: switch_rele_d4_control_230v
+    on_release:
+      then:
+        - script.execute: script_safety_watchdog # Restartuj 2h odpočet
+        - script.execute: script_global_turn_off_check
 
 
   # Optional: Display IP in Logs
@@ -258,6 +403,13 @@ text_sensor:
   - platform: ethernet_info
     ip_address:
       name: "IP Address"
+  - platform: template
+    name: "VZT - Poslední vypnutí (Unix)"
+    icon: "mdi:clock-end"
+    lambda: |-
+      char str[20];
+      sprintf(str, "%d", id(last_ventilation_unix));
+      return {str};
 
 i2c:
   sda: GPIO1
@@ -290,37 +442,46 @@ number:
         - output.set_level:
             id: dac_vystup_2
             level: !lambda 'return x / 100.0f;'
+  
+  # Nastaveni vetrani
+  - platform: template
+    name: "VZT WC - Zpoždění startu"
+    id: wc_delay_start
+    min_value: 0
+    max_value: 300
+    step: 1
+    initial_value: 60
+    unit_of_measurement: "s"
+    mode: box
+    optimistic: true
+    restore_value: true
 
+  - platform: template
+    name: "VZT WC - Doběh"
+    id: wc_run_over
+    min_value: 0
+    max_value: 3000
+    step: 1
+    initial_value: 300
+    unit_of_measurement: "s"
+    mode: box
+    optimistic: true
+    restore_value: true
+
+  - platform: template
+    name: "VZT Koupelna - Doběh"
+    id: bath_run_over
+    min_value: 0
+    max_value: 3000
+    step: 1
+    initial_value: 300
+    unit_of_measurement: "s"
+    mode: box
+    optimistic: true
+    restore_value: true
 
 uart:
   id: lin_test_bus
   tx_pin: GPIO17
   rx_pin: GPIO18
   baud_rate: 9600
-  # Toto zapne automatické vypisování všeho, co přijde/odejde, do logu
-  
-  debug:  
-    dummy_receiver: true
-    direction: BOTH
-
-interval:
-  - interval: 1s
-    then:
-      - if:
-          condition:
-            api.connected:
-          then:
-            - switch.turn_on: switch_led_green
-            - switch.turn_off: switch_led_red
-          else:
-            - switch.turn_on: switch_led_red
-            - switch.turn_off: switch_led_green
-            - delay: 500ms
-            - switch.turn_on: switch_led_green
-            - switch.turn_off: switch_led_red
-            - delay: 500ms
-  - interval: 2s
-    then:
-      - uart.write: "Ahoj pres LIN\r\n"
-      - logger.log: "Zprava odeslana na TX..."
-
