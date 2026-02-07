@@ -1,49 +1,73 @@
+# ╔════════════════════════════════════════════════════════════════════════════════╗
+# ║                     ATREA RK2 VZT & Topení - Kontrolér                         ║
+# ║                                                                                ║
+# ║  Regulátor větrání a topení pro ATREA RK2 jednotku s ESP32-S3                  ║
+# ║                                                                                ║
+# ║  KLÍČOVÉ FUNKCE:                                                               ║
+# ║  • Řízení větrání přes DAC výstup (0.0-1.0) → RK2 manager                      ║
+# ║  • Řízení cirkulace a větrání přes PWM triaky (AC_DIMMER)                      ║
+# ║  • 4x senzory požadavků na větrání (GPIO) - WC, Koupelna, Kuchyň               ║
+# ║  • Periodické větrání (5 minut/hodinu, pokud není aktivní boost)               ║
+# ║  • Tepelné senzory pro diagnostiku (Dallas 1-Wire)                             ║
+# ║  • Monitoring tlaku na filtru (ADC)                                            ║
+# ║  • Watchdog bezpečnosti (2 hodiny timeout)                                     ║
+# ║                                                                                ║
+# ║  DAC VÝSTUP (dac_vystup_1) - Řízení RK2 režimů:                                ║
+# ║  • 0.0 = Pouze cirkulace (bez větrání) - TOPENÍONLY                            ║
+# ║  • 0.5 = Malé větrání + cirkulace - PERIODICKÉ VĚTRÁNÍ                         ║
+# ║  • 0.8 = Velké větrání + cirkulace - BOOST + TOPENÍ                            ║
+# ║  • 1.0 = Velké větrání bez cirkulace - BOOST ONLY                              ║
+# ║                                                                                ║
+# ║  VSTUPNÍ SENZORY:                                                              ║
+# ║  • vzt_wc_prizemi (GPIO42) - Požadavek na větrání WC přízemí                   ║
+# ║  • vzt_wc_patro (GPIO41) - Požadavek na větrání WC patro                       ║
+# ║  • vzt_koupelna (GPIO40) - Požadavek na větrání Koupelny                       ║
+# ║  • vzt_kuchyn (GPIO39) - Požadavek na větrání Kuchyně                          ║
+# ║  • switch_ha_externi - Externí požadavek z Home Assistant                      ║
+# ║                                                                                ║
+# ║  VÝSTUPNÍ PRVKY:                                                               ║
+# ║  • dac_vystup_1 (GPIO 1-Wire DAC via I2C@0x60) - RK2 režim                     ║
+# ║  • output_vetrani (GPIO18 AC_DIMMER) - PWM větrání (0-100%)                    ║
+# ║  • output_cirkulace (GPIO17 AC_DIMMER) - PWM cirkulace (0-100%)                ║
+# ║  • Relé výstupy (GPIO45-48, GPIO21) - Topení, bypass, atd.                     ║
+# ║  • LED indikátory (GPIO03=RED, GPIO15=GREEN)                                   ║
+# ║                                                                                ║
+# ╚════════════════════════════════════════════════════════════════════════════════╝
+
 esphome:
   name: atrea-vzt-control
   friendly_name: ATREA VZT CONTROL
   platformio_options:
-    board_build.flash_mode: dio # Often required for S3
+    board_build.flash_mode: dio
   
   on_boot:
-    priority: 800 # Spustí se krátce po inicializaci výstupů
+    priority: 800
     then:
-      - output.set_level:
-          id: dac_vystup_1
-          level: 0%
-      - output.set_level:
-          id: dac_vystup_2
-          level: 0%
+      - script.execute: rk2_manager
 
 esp32:
   board: esp32-s3-devkitc-1
   framework:
     type: esp-idf
-  
+
 globals:
   - id: last_ventilation_unix
     type: int
     restore_value: yes
     initial_value: '0'
-  
   - id: last_ventilation_millis
     type: uint32_t
     restore_value: no
     initial_value: '0'
 
-# Enable logging
 logger:
-
-# Enable Home Assistant API
 api:
   encryption:
     key: !secret api_encryption
-  # Spustí se, jakmile se Home Assistant (nebo jiný klient) připojí
   on_client_connected:
     then:
       - switch.turn_on: switch_led_green
       - switch.turn_off: switch_led_red
-
-  # Spustí se okamžitě při ztrátě spojení
   on_client_disconnected:
     then:
       - switch.turn_on: switch_led_red
@@ -53,7 +77,6 @@ ota:
   - platform: esphome
     password: !secret ota_password
 
-# Enable Ethernet
 ethernet:
   type: W5500
   clk_pin: GPIO13
@@ -61,8 +84,7 @@ ethernet:
   miso_pin: GPIO12
   cs_pin: GPIO14
   interrupt_pin: GPIO10
-  reset_pin: GPIO09 # Adjust based on board, sometimes unnecessary
-  # Optional manual IP
+  reset_pin: GPIO09
   manual_ip:
     static_ip: 192.168.1.115
     gateway: 192.168.1.1
@@ -73,67 +95,16 @@ time:
     id: sntp_time
     timezone: "Europe/Prague"
 
-script:
-  # Watchdog na vetrani, maximalne dve hodiny behu
-  - id: script_safety_watchdog
-    mode: restart # Klíčové: restartuje odpočet při každém zavolání
-    then:
-      - delay: 7200s
-      - logger.log: "BEZPEČNOSTNÍ POJISTKA: Větrání běželo 2 hodiny bez změny, vypínám."
-      - switch.turn_off: switch_rele_d4_control_230v
-      - globals.set:
-          id: last_ventilation_unix
-          value: !lambda 'return id(sntp_time).now().timestamp;'
-      - globals.set:
-          id: last_ventilation_millis
-          value: !lambda 'return millis() / 1000;'
-
-  # Skript pro bezpečné vypnutí a zápis do globals
-  - id: script_global_turn_off_check
-    then:
-      - if:
-          condition: # Vypni jen když jsou VŠECHNY vstupy fyzicky vypnuté
-            and:
-              - binary_sensor.is_off: vzt_wc_prizemi
-              - binary_sensor.is_off: vzt_wc_patro
-              - binary_sensor.is_off: vzt_koupelna
-              - binary_sensor.is_off: vzt_kuchyn
-              - switch.is_off: switch_ha_externi
-          then:
-            - script.stop: script_safety_watchdog # ZASTAV POJISTKU, je korektně vypnuto
-            - switch.turn_off: switch_rele_d4_control_230v
-            - globals.set:
-                id: last_ventilation_unix
-                value: !lambda 'return id(sntp_time).now().timestamp;'
-            - globals.set:
-                id: last_ventilation_millis
-                value: !lambda 'return millis() / 1000;'
-            - logger.log: "Větrání vypnuto, časy uloženy."
-
-  - id: script_wc_logic
-    mode: restart
-    then:
-      - delay: !lambda "return id(wc_delay_start).state * 1000;"
-      - switch.turn_on: switch_rele_d4_control_230v
-
-  - id: script_wc_overrun
-    mode: restart
-    then:
-      - delay: !lambda "return id(wc_run_over).state * 1000;"
-      - script.execute: script_global_turn_off_check
-
-  - id: script_bath_overrun
-    mode: restart
-    then:
-      - delay: !lambda "return id(bath_run_over).state * 1000;"
-      - script.execute: script_global_turn_off_check
-
-
+#------------------------------------------------------------------------------------
+#                         Start of HW part definitions (Inputs)
+#------------------------------------------------------------------------------------
+# Teplotní senzory (Dallas 1-Wire) - Diagnostika a monitoring teploty
+# Monitorují teplotu na různých místech rekuperace a VZT jednotky
+#------------------------------------------------------------------------------------
 
 one_wire:
   - platform: gpio
     pin: GPIO16
-
 
 sensor:
   - platform: dallas_temp
@@ -197,8 +168,84 @@ sensor:
     lambda: |-
       if (id(last_ventilation_millis) == 0) return 0;
       return (millis() / 1000) - id(last_ventilation_millis);
-          
+
+binary_sensor:
+  # Senzory požadavků na větrání - vstupní signály z fyzických přítomnostních senzorů
+  # Jsou aktivovány LOW (inverted: true)
+  # Spouštějí odpovídající logiku větrání s možností zpoždění a doběhu
+  
+  - platform: gpio
+    id: vzt_wc_prizemi
+    pin: {number: GPIO42, mode: {input: true, pullup: true}, inverted: true}
+    name: "Požadavek větrání WC přízemí"
+    on_press: [script.execute: script_safety_watchdog, script.execute: script_wc_logic]
+    on_release: [script.execute: script_safety_watchdog, script.execute: script_wc_overrun]
+
+  - platform: gpio
+    id: vzt_wc_patro
+    pin: {number: GPIO41, mode: {input: true, pullup: true}, inverted: true}
+    name: "Požadavek  větrání WC patro"
+    on_press: [script.execute: script_safety_watchdog, script.execute: script_wc_logic]
+    on_release: [script.execute: script_safety_watchdog, script.execute: script_wc_overrun]
+
+  - platform: gpio
+    id: vzt_koupelna
+    pin: {number: GPIO40, mode: {input: true, pullup: true}, inverted: true}
+    name: "Požadavek  větrání Koupelna"
+    on_press: 
+      - script.stop: script_bath_overrun  # Zrušit starý doběh
+      - script.execute: script_safety_watchdog
+      - script.execute: rk2_manager  # Okamžitě spustit větrání (bez zpoždění jako WC)
+    on_release: [script.execute: script_safety_watchdog, script.execute: script_bath_overrun]
+
+  - platform: gpio
+    id: vzt_kuchyn
+    pin: {number: GPIO39, mode: {input: true, pullup: true}, inverted: true}
+    name: "Požadavek  větrání kuchyň"
+    on_press: [script.execute: script_safety_watchdog, script.execute: rk2_manager]
+    on_release: [script.execute: script_safety_watchdog, script.execute: script_global_turn_off_check]
+
+#------------------------------------------------------------------------------------
+#                            HW part definitions (Outputs)
+#------------------------------------------------------------------------------------
+# AC DIMMER triaky na GPIO17 a GPIO18:
+# - GPIO17: Regulace cirkulace (0-100%)
+# - GPIO18: Regulace větrání (0-100%)
+# Oba používají zero-crossing pin GPIO34 pro synchronizaci
+#
+# Relé výstupy pro elektromagnetické ventily a čerpadla:
+# - GPIO45: Nabijení tabletu
+# - GPIO46: Relé NO (normally open)
+# - GPIO47: Klapka bypass
+# - GPIO48: Elektromagnetický ventil topení VZT
+# - GPIO21: Čerpadlo topení
+#------------------------------------------------------------------------------------
 output:
+    # Triaky (Fázová regulace)
+  - platform: ac_dimmer
+    id: output_cirkulace
+    gate_pin: GPIO17
+    zero_cross_pin:
+      number: GPIO34
+      allow_other_uses: true
+      mode:
+        input: true
+        pullup: true
+      inverted: yes
+    method: LEADING_PULSE
+    
+  - platform: ac_dimmer
+    id: output_vetrani
+    gate_pin: GPIO18
+    zero_cross_pin:
+      number: GPIO34
+      allow_other_uses: true
+      mode:
+        input: true
+        pullup: true
+      inverted: yes
+    method: LEADING_PULSE
+
   - platform: gpio
     pin: 
       number: GPIO45
@@ -225,7 +272,7 @@ output:
         pullup: true
         pulldown: false
       inverted: false  # Keeps active-low relay OFF on boot
-    id: gpio_rele_230v_1
+    id: gpio_rele_klapka_bypass
   - platform: gpio
     pin: 
       number: GPIO48
@@ -234,7 +281,7 @@ output:
         pullup: true
         pulldown: false
       inverted: false  # Keeps active-low relay OFF on boot
-    id: gpio_rele_230v_2
+    id: gpio_rele_el_ventil_topeni_vzt
   - platform: gpio
     pin: 
       number: GPIO21
@@ -243,8 +290,7 @@ output:
         pullup: true
         pulldown: false
       inverted: false  # Keeps active-low relay OFF on boot
-    id: gpio_rele_d4_control_230v
-  
+    id: gpio_rele_cerpadlo_topeni
   
   - platform: gpio
     pin: GPIO03
@@ -261,6 +307,32 @@ output:
     id: dac_vystup_2
     address: 0x61 # ADDR pin na 5V (VCC)
 
+i2c:
+  sda: GPIO1
+  scl: GPIO0
+  frequency: 100kHz
+  scan: true
+
+light:
+  # Interní light entity pro řízení PWM výkonu
+  # Nejsou viditelné v HA GUI (internal: true) - řídí se přímo z rk2_manager
+  
+  - platform: monochromatic
+    name: "VZT - Aktuální výkon Cirkulace"
+    output: output_cirkulace
+    id: light_cirkulace
+    internal: true  # Ovládáno managerem skrze lambda
+  - platform: monochromatic
+    name: "VZT - Aktuální výkon Větrání"
+    output: output_vetrani
+    id: light_vetrani
+    internal: true
+#------------------------------------------------------------------------------------
+#                         Home Assistant Interface & Control
+#------------------------------------------------------------------------------------
+# Ovládací prvky pro HA - LED indikátory, relé, teplota, čas, nastavení
+#------------------------------------------------------------------------------------
+
 switch:
   - platform: output
     name: LED Red
@@ -273,7 +345,7 @@ switch:
     id: switch_led_green
     internal: True
   - platform: output
-    name: Relé nabijení tablet
+    name: Nabijení tablet
     output: gpio_rele_nabijeni
     id: switch_rele_nabijeni
   - platform: output
@@ -281,95 +353,41 @@ switch:
     output: gpio_rele_no
     id: switch_rele_no
   - platform: output
-    name: Relé 230V 1
-    output: gpio_rele_230v_1
-    id: switch_rele_230v_1
+    name: Klapka bypass
+    output: gpio_rele_klapka_bypass
+    id: switch_rele_klapka_bypass
   - platform: output
-    name: Relé 230V 2
-    output: gpio_rele_230v_2
-    id: switch_rele_230v_2
+    name: Topení ventil VZT
+    output: gpio_rele_el_ventil_topeni_vzt
+    id: switch_rele_el_ventil_topeni_vzt
   - platform: output
-    name: Relé ovladání větrání D4
-    output: gpio_rele_d4_control_230v
-    id: switch_rele_d4_control_230v
+    name: Čerpadlo topení
+    output: gpio_rele_cerpadlo_topeni
+    id: switch_rele_cerpadlo_topeni
   - platform: template
     name: "VZT - HA Externí požadavek"
     id: switch_ha_externi
     optimistic: true
-    on_turn_on:
-      then:
-        - script.execute: script_safety_watchdog
-        - switch.turn_on: switch_rele_d4_control_230v
-    on_turn_off:
-      then:
-        - script.execute: script_safety_watchdog
-        - script.execute: script_global_turn_off_check
-    
+    icon: mdi:fan
+    on_turn_on: [script.execute: script_safety_watchdog, script.execute: rk2_manager]
+    on_turn_off: [script.execute: script_safety_watchdog, script.execute: script_global_turn_off_check]
 
-binary_sensor:
-  - # D1 - WC PŘÍZEMÍ
-    platform: gpio
-    id: vzt_wc_prizemi
-    pin: {number: GPIO42, mode: {input: true, pullup: true}, inverted: true}
-    name: "HV vstup větrání WC přízemí"
-    filters: [{delayed_on_off: 25ms}]
-    on_press:
-      then:
-        - script.execute: script_safety_watchdog
-        - script.execute: script_wc_logic
-    on_release:
-      then:
-        - script.execute: script_safety_watchdog
-        - script.execute: script_wc_overrun
+  - platform: template
+    name: "VZT - Topení aktivní"
+    id: switch_topeni_on
+    optimistic: true
+    icon: mdi:fire
+    on_turn_on: [script.execute: rk2_manager]
+    on_turn_off: [script.execute: rk2_manager]
 
-  - # D2 - WC PATRO
-    platform: gpio
-    id: vzt_wc_patro
-    pin: {number: GPIO41, mode: {input: true, pullup: true}, inverted: true}
-    name: "HV vstup větrání WC patro"
-    filters: [{delayed_on_off: 25ms}]
-    on_press:
-      then:
-        - script.execute: script_safety_watchdog
-        - script.execute: script_wc_logic
-    on_release:
-      then:
-        - script.execute: script_safety_watchdog
-        - script.execute: script_wc_overrun
+  - platform: template
+    name: "VZT - Topení na MAX (Turbo)"
+    id: switch_topeni_turbo
+    optimistic: true
+    icon: mdi:lightning-bolt
+    on_turn_on: [script.execute: rk2_manager]
+    on_turn_off: [script.execute: rk2_manager]
 
-  - # D3 - KOUPELNA
-    platform: gpio
-    id: vzt_koupelna
-    pin: {number: GPIO40, mode: {input: true, pullup: true}, inverted: true}
-    name: "HV vstup větrání Koupelna"
-    filters: [{delayed_on_off: 25ms}]
-    on_press:
-      then:
-        - script.stop: script_bath_overrun
-        - script.execute: script_safety_watchdog
-        - switch.turn_on: switch_rele_d4_control_230v
-    on_release:
-      then:
-        - script.execute: script_safety_watchdog
-        - script.execute: script_bath_overrun
-
-  - # D4 - KUCHYŇ
-    platform: gpio
-    id: vzt_kuchyn
-    pin: {number: GPIO39, mode: {input: true, pullup: true}, inverted: true}
-    name: "HV vstup větrání kuchyň"
-    filters: [{delayed_on_off: 25ms}]
-    on_press:
-      then:
-        - script.execute: script_safety_watchdog
-        - switch.turn_on: switch_rele_d4_control_230v
-    on_release:
-      then:
-        - script.execute: script_safety_watchdog
-        - script.execute: script_global_turn_off_check
-
-
-  # Optional: Display IP in Logs
 text_sensor:
   - platform: ethernet_info
     ip_address:
@@ -382,74 +400,258 @@ text_sensor:
       sprintf(str, "%d", id(last_ventilation_unix));
       return {str};
 
-i2c:
-  sda: GPIO1
-  scl: GPIO0
-  frequency: 100kHz
-  scan: true
+select:
+  - platform: template
+    name: "VZT - Aktuální režim"
+    id: vzt_current_mode
+    update_interval: 1s
+    options:
+      - "Klid"
+      - "Nárazové větrání"
+      - "Nárazové větrání + Topení"
+      - "Větrání (Profuk)"
+      - "Větrání (Profuk) + Topení"
+      - "Pouze Topení"
+    lambda: |-
+      bool boost = id(vzt_wc_prizemi).state || id(vzt_wc_patro).state || id(vzt_koupelna).state || id(vzt_kuchyn).state || id(switch_ha_externi).state;
+      bool topeni = id(switch_topeni_on).state;
+      bool profuk = id(script_periodic_ventilation).is_running();
 
-# Vytvoření entit v Home Assistant (např. jako čísla 0-100%)
+      if (boost) {
+        if (topeni) {
+          return std::string("Nárazové větrání + Topení");
+        } else {
+          return std::string("Nárazové větrání");
+        }
+      } else if (profuk) {
+        if (topeni) {
+          return std::string("Větrání (Profuk) + Topení");
+        } else {
+          return std::string("Větrání (Profuk)");
+        }
+      } else if (topeni) {
+        return std::string("Pouze Topení");
+      }
+      return std::string("Klid");
+    set_action:
+      then:
+        - logger.log: "VZT režim je read-only (určen automaticky)"
+
 number:
-  - platform: template
-    name: "Servo 1 Ovládání"
-    min_value: 0
-    max_value: 100
-    step: 1
-    unit_of_measurement: "%"
-    set_action:
-      then:
-        - output.set_level:
-            id: dac_vystup_1
-            level: !lambda 'return x / 100.0f;'
-
-  - platform: template
-    name: "Servo 2 Ovládání"
-    min_value: 0
-    max_value: 100
-    step: 1
-    unit_of_measurement: "%"
-    set_action:
-      then:
-        - output.set_level:
-            id: dac_vystup_2
-            level: !lambda 'return x / 100.0f;'
+  # Nastavení zpoždění a doběhu větrání
   
-  # Nastaveni vetrani
   - platform: template
     name: "VZT WC - Zpoždění startu"
     id: wc_delay_start
     min_value: 0
     max_value: 300
-    step: 1
+    step: 10
     initial_value: 60
-    unit_of_measurement: "s"
     optimistic: true
     restore_value: true
-
+    unit_of_measurement: "s"
+    icon: mdi:timer-sand
   - platform: template
     name: "VZT WC - Doběh"
     id: wc_run_over
     min_value: 0
     max_value: 3000
-    step: 1
+    step: 10
     initial_value: 300
-    unit_of_measurement: "s"
     optimistic: true
     restore_value: true
-
+    unit_of_measurement: "s"
+    icon: mdi:timer-sand
   - platform: template
     name: "VZT Koupelna - Doběh"
     id: bath_run_over
     min_value: 0
     max_value: 3000
-    step: 1
+    step: 10
     initial_value: 300
-    unit_of_measurement: "s"
     optimistic: true
     restore_value: true
+    unit_of_measurement: "s"
+    icon: mdi:timer-sand
+  
+  # Nastavení otáček - Procenta výkonu pro různé režimy
+  
+  - platform: template
+    name: "VZT Výkon Větrání MALÝ"
+    id: pwr_vet_low
+    min_value: 0
+    max_value: 100
+    step: 2
+    initial_value: 30
+    optimistic: true
+    unit_of_measurement: "%"
+    icon: mdi:fan
+  - platform: template
+    name: "VZT Výkon Větrání VELKÝ"
+    id: pwr_vet_high
+    min_value: 0
+    max_value: 100
+    step: 2
+    initial_value: 80
+    optimistic: true
+    unit_of_measurement: "%"
+    icon: mdi:fan
+  - platform: template
+    name: "VZT Výkon Cirkulace MALÝ"
+    id: pwr_cirk_low
+    min_value: 0
+    max_value: 100
+    step: 2
+    initial_value: 35
+    optimistic: true
+    unit_of_measurement: "%"
+    icon: mdi:fan
+  - platform: template
+    name: "VZT Výkon Cirkulace VELKÝ"
+    id: pwr_cirk_high
+    min_value: 0
+    max_value: 100
+    step: 2
+    initial_value: 90
+    optimistic: true
+    unit_of_measurement: "%"
+    icon: mdi:fan
 
-uart:
-  id: lin_test_bus
-  tx_pin: GPIO17
-  rx_pin: GPIO18
-  baud_rate: 9600
+#------------------------------------------------------------------------------------
+#                         Logika regulatoru (Manager)
+#------------------------------------------------------------------------------------
+script:
+  # RK2 Manager - Centrální řídící logika ATREA RK2 jednotky
+  # Řídí větrání a topení na základě:
+  # - Požadavků ze senzorů (WC, Koupelna, Kuchyň)
+  # - Externího požadavku z HA (switch_ha_externi)
+  # - Stavu topení (switch_topeni_on, switch_topeni_turbo)
+  # - Periodického větrání (profuk)
+  #
+  # Výstupy:
+  # - dac_vystup_1: Analogová hodnota pro RK2 (0.0-1.0) určující režim větrání
+  # - light_vetrani: PWM otáček větrání (0-100%)
+  # - light_cirkulace: PWM otáček cirkulace (0-100%)
+  #
+  # Stavy RK2 (dac_vystup_1):
+  # - 0.0  = pouze cirkulace (topení bez větrání)
+  # - 0.5  = větrání MALÉ + cirkulace (periodické větrání)
+  # - 0.8  = větrání VELKÉ + cirkulace (boost + topení)
+  # - 1.0  = větrání VELKÉ (bez topení)
+  - id: rk2_manager
+    mode: restart
+    then:
+      - lambda: |-
+          // Příznak boost: zda je aktivní některý požadavek na větrání
+          bool boost = id(vzt_wc_prizemi).state || id(vzt_wc_patro).state || id(vzt_koupelna).state || id(vzt_kuchyn).state || id(switch_ha_externi).state;
+          bool topeni = id(switch_topeni_on).state;
+          bool turbo = id(switch_topeni_turbo).state;
+          bool profuk = id(script_periodic_ventilation).is_running();
+
+          float dac = 0.0, vet = 0.0, cirk = 0.0;
+
+          if (boost) {
+            // BOOST režim: Požadavek na větrání je aktivní
+            if (topeni) { 
+              // Boost + Topení: Velké větrání + malá cirkulace
+              dac = 0.8; vet = id(pwr_vet_high).state; cirk = id(pwr_cirk_low).state; 
+            }
+            else { 
+              // Boost bez topení: Velké větrání bez cirkulace
+              dac = 1.0; vet = id(pwr_vet_high).state; cirk = 0.0; 
+            }
+          } else if (profuk) {
+            // PERIODICKÉ VĚTRÁNÍ: Běh naplánovaného větrání (bez boost)
+            if (topeni) { 
+              // Profuk + Topení: Malé větrání + malá cirkulace
+              dac = 0.5; vet = id(pwr_vet_low).state; cirk = id(pwr_cirk_low).state; 
+            }
+            else { 
+              // Profuk bez topení: Malé větrání bez cirkulace
+              dac = 1.0; vet = id(pwr_vet_low).state; cirk = 0.0; 
+            }
+          } else if (topeni) {
+            // TOPENÍ BEZ VĚTRÁNÍ: Pouze cirkulace
+            dac = 0.0; vet = 0.0; cirk = turbo ? id(pwr_cirk_high).state : id(pwr_cirk_low).state;
+          }
+
+          // Aplikace vypočítaných hodnot na výstupy
+          id(dac_vystup_1).set_level(dac);
+          auto cv = id(light_vetrani).make_call(); cv.set_brightness(vet/100.0f); cv.set_state(vet>0); cv.perform();
+          auto cc = id(light_cirkulace).make_call(); cc.set_brightness(cirk/100.0f); cc.set_state(cirk>0); cc.perform();
+
+          // Řízení externích zařízení topení
+          // Pokud je topení aktivní, zapnout čerpadlo a ventil topné vody
+          // Jinak je vypnout
+          if (topeni) {
+            id(switch_rele_cerpadlo_topeni).turn_on();           // Zapnout čerpadlo topení
+            id(switch_rele_el_ventil_topeni_vzt).turn_on();      // Zapnout ventil topné vody
+          } else {
+            id(switch_rele_cerpadlo_topeni).turn_off();          // Vypnout čerpadlo topení
+            id(switch_rele_el_ventil_topeni_vzt).turn_off();     // Vypnout ventil topné vody
+          }
+  # Bezpečnostní kontrola vypnutí - spustí se když je vypnut veškerý požadavek na větrání
+  # Zaznamenává čas posledního běhu větrání pro výpočet periodického větrání
+  - id: script_global_turn_off_check
+    then:
+      - if:
+          condition:
+            and:
+              - binary_sensor.is_off: vzt_wc_prizemi
+              - binary_sensor.is_off: vzt_wc_patro
+              - binary_sensor.is_off: vzt_koupelna
+              - binary_sensor.is_off: vzt_kuchyn
+              - switch.is_off: switch_ha_externi
+          then:
+            - script.stop: script_safety_watchdog  # Zrušit watchdog timeout
+            - script.execute: rk2_manager  # Zastavit větrání (nebude aktivní boost)
+            - globals.set: {id: last_ventilation_unix, value: !lambda "return id(sntp_time).now().timestamp;"}
+            - globals.set: {id: last_ventilation_millis, value: !lambda "return millis() / 1000;"}
+
+  # Watchdog bezpečnosti - zastavuje větrání po 2 hodinách bez nového požadavku
+  # Prevence nekonečného chodu větrání v případě selhání senzoru
+  - id: script_safety_watchdog
+    mode: restart
+    then:
+      - delay: 7200s  # 2 hodiny
+      - script.execute: rk2_manager  # Vypne vše, protože boost bude off
+
+  # Logika pro WC - Zpoždění startu + doběh
+  - id: script_wc_logic
+    mode: restart
+    then:
+      - delay: !lambda "return id(wc_delay_start).state * 1000;"  # Zpoždění startu před zapnutím
+      - script.execute: rk2_manager  # Spustit větrání
+
+  # Doběh po WC - Pokračuje v běhu po uvolnění senzoru WC
+  - id: script_wc_overrun
+    mode: restart
+    then:
+      - delay: !lambda "return id(wc_run_over).state * 1000;"
+      - script.execute: script_global_turn_off_check  # Kontrola vypnutí
+
+  # Doběh po Koupelně - Pokračuje v běhu po uvolnění senzoru koupelny
+  - id: script_bath_overrun
+    mode: restart
+    then:
+      - delay: !lambda "return id(bath_run_over).state * 1000;"
+      - script.execute: script_global_turn_off_check
+
+  # Periodické větrání - Běží 5 minut každou hodinu (nebo déle, pokud je v klidu)
+  - id: script_periodic_ventilation
+    then:
+      - script.execute: rk2_manager
+      - delay: 300s  # 5 minut větrání
+      - globals.set: {id: last_ventilation_unix, value: !lambda "return id(sntp_time).now().timestamp;" }
+      - script.execute: rk2_manager  # Zastavit větrání
+
+interval:
+  # Periodická kontrola - spouští větrání každou hodinu, pokud neběželo dlouhodobě
+  # (více než 1 hodina bez větrání)
+  - interval: 1min
+    then:
+      - if:
+          condition:
+            lambda: 'return (id(sntp_time).now().timestamp - id(last_ventilation_unix)) > 3600;'
+          then: [script.execute: script_periodic_ventilation]
+
