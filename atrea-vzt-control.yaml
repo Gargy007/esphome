@@ -59,6 +59,18 @@ globals:
     type: uint32_t
     restore_value: no
     initial_value: '0'
+  - id: dac_current_level
+    type: float
+    restore_value: no
+    initial_value: '0.0'
+  - id: vet_current_pwr
+    type: float
+    restore_value: no
+    initial_value: '0.0'
+  - id: cirk_current_pwr
+    type: float
+    restore_value: no
+    initial_value: '0.0'
 
 logger:
 api:
@@ -169,6 +181,36 @@ sensor:
       if (id(last_ventilation_millis) == 0) return 0;
       return (millis() / 1000) - id(last_ventilation_millis);
 
+  - platform: template
+    name: "VZT - Výkon Cirkulace"
+    id: sensor_pwr_cirkulace
+    unit_of_measurement: "%"
+    icon: "mdi:fan"
+    state_class: measurement
+    update_interval: 1s
+    lambda: |-
+      return id(cirk_current_pwr);
+
+  - platform: template
+    name: "VZT - Výkon Větrání"
+    id: sensor_pwr_vetrani
+    unit_of_measurement: "%"
+    icon: "mdi:fan"
+    state_class: measurement
+    update_interval: 1s
+    lambda: |-
+      return id(vet_current_pwr);
+
+  - platform: template
+    name: "VZT - Stupeň otevření klapky RK2"
+    id: sensor_dac_level
+    unit_of_measurement: "%"
+    icon: "mdi:percent"
+    state_class: measurement
+    update_interval: 1s
+    lambda: |-
+      return id(dac_current_level) * 100.0;
+
 binary_sensor:
   # Senzory požadavků na větrání - vstupní signály z fyzických přítomnostních senzorů
   # Jsou aktivovány LOW (inverted: true)
@@ -204,6 +246,28 @@ binary_sensor:
     name: "Požadavek  větrání kuchyň"
     on_press: [script.execute: script_safety_watchdog, script.execute: rk2_manager]
     on_release: [script.execute: script_safety_watchdog, script.execute: script_global_turn_off_check]
+
+  # Binární senzory pro sledování stavu relé topení
+  - platform: template
+    name: "Topení - Čerpadlo (stav)"
+    id: bs_cerpadlo_topeni
+    icon: mdi:water-pump
+    lambda: |-
+      return id(switch_rele_cerpadlo_topeni).state;
+
+  - platform: template
+    name: "Topení - Ventil VZT (stav)"
+    id: bs_ventil_topeni_vzt
+    icon: mdi:water
+    lambda: |-
+      return id(switch_rele_el_ventil_topeni_vzt).state;
+
+  - platform: template
+    name: "VZT - Bypass (stav)"
+    id: bs_bypass
+    icon: mdi:arrows-vertical
+    lambda: |-
+      return id(switch_rele_klapka_bypass).state;
 
 #------------------------------------------------------------------------------------
 #                            HW part definitions (Outputs)
@@ -356,14 +420,17 @@ switch:
     name: Klapka bypass
     output: gpio_rele_klapka_bypass
     id: switch_rele_klapka_bypass
+    internal: true
   - platform: output
     name: Topení ventil VZT
     output: gpio_rele_el_ventil_topeni_vzt
     id: switch_rele_el_ventil_topeni_vzt
+    internal: true
   - platform: output
     name: Čerpadlo topení
     output: gpio_rele_cerpadlo_topeni
     id: switch_rele_cerpadlo_topeni
+    internal: true
   - platform: template
     name: "VZT - HA Externí požadavek"
     id: switch_ha_externi
@@ -387,6 +454,14 @@ switch:
     icon: mdi:lightning-bolt
     on_turn_on: [script.execute: rk2_manager]
     on_turn_off: [script.execute: rk2_manager]
+
+  - platform: template
+    name: "VZT - Letní režim (Bypass)"
+    id: switch_letni_rezim
+    optimistic: true
+    icon: mdi:sun
+    on_turn_on: [switch.turn_on: switch_rele_klapka_bypass]
+    on_turn_off: [switch.turn_off: switch_rele_klapka_bypass]
 
 text_sensor:
   - platform: ethernet_info
@@ -577,6 +652,9 @@ script:
 
           // Aplikace vypočítaných hodnot na výstupy
           id(dac_vystup_1).set_level(dac);
+          id(dac_current_level) = dac;  // Uložit aktuální DAC hodnotu
+          id(vet_current_pwr) = vet;    // Uložit aktuální výkon větrání
+          id(cirk_current_pwr) = cirk;  // Uložit aktuální výkon cirkulace
           auto cv = id(light_vetrani).make_call(); cv.set_brightness(vet/100.0f); cv.set_state(vet>0); cv.perform();
           auto cc = id(light_cirkulace).make_call(); cc.set_brightness(cirk/100.0f); cc.set_state(cirk>0); cc.perform();
 
