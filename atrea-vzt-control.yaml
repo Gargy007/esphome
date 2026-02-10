@@ -73,6 +73,10 @@ globals:
     initial_value: '0.0'
 
 logger:
+  level: INFO
+  logs:
+    sensor: WARN
+
 api:
   encryption:
     key: !secret api_encryption
@@ -148,6 +152,7 @@ sensor:
     pin: GPIO02
     name: "Rozdíl tlaku na filtru"
     id: pressure_diff_at_filter
+    internal: false
     # Nastavení pro maximální přesnost na ESP32-S3
     attenuation: 11db  # Umožní číst až do 3.1V (při 3.3V VCC)
     update_interval: 1s
@@ -220,15 +225,27 @@ binary_sensor:
     id: vzt_wc_prizemi
     pin: {number: GPIO42, mode: {input: true, pullup: true}, inverted: true}
     name: "Požadavek větrání WC přízemí"
-    on_press: [script.execute: script_safety_watchdog, script.execute: script_wc_logic]
-    on_release: [script.execute: script_safety_watchdog, script.execute: script_wc_overrun]
+    on_press:
+      - script.stop: script_wc_overrun  # Zastavit starý doběh
+      - script.execute: script_safety_watchdog
+      - script.execute: script_wc_logic  # Spustit nový pokus se zpožděním
+    on_release:
+      - script.stop: script_wc_logic  # Zastavit zpoždění
+      - script.execute: script_safety_watchdog
+      - script.execute: script_wc_overrun  # Spustit doběh
 
   - platform: gpio
     id: vzt_wc_patro
     pin: {number: GPIO41, mode: {input: true, pullup: true}, inverted: true}
     name: "Požadavek  větrání WC patro"
-    on_press: [script.execute: script_safety_watchdog, script.execute: script_wc_logic]
-    on_release: [script.execute: script_safety_watchdog, script.execute: script_wc_overrun]
+    on_press:
+      - script.stop: script_wc_overrun  # Zastavit starý doběh
+      - script.execute: script_safety_watchdog
+      - script.execute: script_wc_logic  # Spustit nový pokus se zpožděním
+    on_release:
+      - script.stop: script_wc_logic  # Zastavit zpoždění
+      - script.execute: script_safety_watchdog
+      - script.execute: script_wc_overrun  # Spustit doběh
 
   - platform: gpio
     id: vzt_koupelna
@@ -492,6 +509,11 @@ select:
       bool topeni = id(switch_topeni_on).state;
       bool profuk = id(script_periodic_ventilation).is_running();
 
+      // Debug logging
+      ESP_LOGI("SELECT_MODE", "boost=%d, topeni=%d, profuk=%d | WC_priz=%d, WC_pat=%d, Koup=%d, Kuch=%d, HA_ext=%d", 
+        boost, topeni, profuk, 
+        id(vzt_wc_prizemi).state, id(vzt_wc_patro).state, id(vzt_koupelna).state, id(vzt_kuchyn).state, id(switch_ha_externi).state);
+
       if (boost) {
         if (topeni) {
           return std::string("Nárazové větrání + Topení");
@@ -655,6 +677,20 @@ script:
           id(dac_current_level) = dac;  // Uložit aktuální DAC hodnotu
           id(vet_current_pwr) = vet;    // Uložit aktuální výkon větrání
           id(cirk_current_pwr) = cirk;  // Uložit aktuální výkon cirkulace
+          
+          // Logování změn režimu
+          char mode_str[60];
+          if (boost) {
+            sprintf(mode_str, "BOOST %s: Vét %.0f%%, Cirk %.0f%%", topeni ? "+ TOPENÍ" : "bez topení", vet, cirk);
+          } else if (profuk) {
+            sprintf(mode_str, "PROFUK %s: Vét %.0f%%, Cirk %.0f%%", topeni ? "+ TOPENÍ" : "bez topení", vet, cirk);
+          } else if (topeni) {
+            sprintf(mode_str, "TOPENÍ: Cirkulace %.0f%%", cirk);
+          } else {
+            sprintf(mode_str, "Režim KLID");
+          }
+          ESP_LOGI("RK2_MANAGER", "%s", mode_str);
+          
           auto cv = id(light_vetrani).make_call(); cv.set_brightness(vet/100.0f); cv.set_state(vet>0); cv.perform();
           auto cc = id(light_cirkulace).make_call(); cc.set_brightness(cirk/100.0f); cc.set_state(cirk>0); cc.perform();
 
@@ -681,6 +717,7 @@ script:
               - binary_sensor.is_off: vzt_kuchyn
               - switch.is_off: switch_ha_externi
           then:
+            - logger.log: ">>> VĚTRÁNÍ VYPNUTO - všechny senzory vypnuty"
             - script.stop: script_safety_watchdog  # Zrušit watchdog timeout
             - script.execute: rk2_manager  # Zastavit větrání (nebude aktivní boost)
             - globals.set: {id: last_ventilation_unix, value: !lambda "return id(sntp_time).now().timestamp;"}
@@ -698,28 +735,36 @@ script:
   - id: script_wc_logic
     mode: restart
     then:
+      - logger.log: ">>> WC: Spouštění (čekání na zpoždění)"
       - delay: !lambda "return id(wc_delay_start).state * 1000;"  # Zpoždění startu před zapnutím
+      - logger.log: ">>> WC: Zpoždění uplynulo - větrání se spouští"
       - script.execute: rk2_manager  # Spustit větrání
 
   # Doběh po WC - Pokračuje v běhu po uvolnění senzoru WC
   - id: script_wc_overrun
     mode: restart
     then:
+      - logger.log: ">>> WC: Doběh tvaran (větrání pokračuje)"
       - delay: !lambda "return id(wc_run_over).state * 1000;"
+      - logger.log: ">>> WC: Doběh skončil"
       - script.execute: script_global_turn_off_check  # Kontrola vypnutí
 
   # Doběh po Koupelně - Pokračuje v běhu po uvolnění senzoru koupelny
   - id: script_bath_overrun
-    mode: restart
+    mode: single
     then:
+      - logger.log: ">>> KOUPELNA: Doběh tvaran (větrání pokračuje)"
       - delay: !lambda "return id(bath_run_over).state * 1000;"
+      - logger.log: ">>> KOUPELNA: Doběh skončil"
       - script.execute: script_global_turn_off_check
 
   # Periodické větrání - Běží 5 minut každou hodinu (nebo déle, pokud je v klidu)
   - id: script_periodic_ventilation
     then:
+      - logger.log: ">>> PROFUK: Zahájen 5-minutové periodické větrání"
       - script.execute: rk2_manager
       - delay: 300s  # 5 minut větrání
+      - logger.log: ">>> PROFUK: Periodické větrání skončilo"
       - globals.set: {id: last_ventilation_unix, value: !lambda "return id(sntp_time).now().timestamp;" }
       - script.execute: rk2_manager  # Zastavit větrání
 
