@@ -49,7 +49,6 @@ esp32:
   board: esp32-s3-devkitc-1
   framework:
     type: esp-idf
-
 globals:
   - id: last_ventilation_unix
     type: int
@@ -71,7 +70,28 @@ globals:
     type: float
     restore_value: no
     initial_value: '0.0'
-
+  # NOVÉ FLAGY PRO AKTIVNÍ VĚTRÁNÍ
+  - id: flag_kuchyn_active
+    type: bool
+    restore_value: no
+    initial_value: 'false'
+  - id: flag_ha_active
+    type: bool
+    restore_value: no
+    initial_value: 'false'
+  - id: flag_koupelna_active
+    type: bool
+    restore_value: no
+    initial_value: 'false'
+  - id: flag_wc_prizemi_active
+    type: bool
+    restore_value: no
+    initial_value: 'false'
+  - id: flag_wc_patro_active
+    type: bool
+    restore_value: no
+    initial_value: 'false'
+    
 logger:
 api:
   encryption:
@@ -210,42 +230,53 @@ sensor:
     update_interval: 1s
     lambda: |-
       return id(dac_current_level) * 100.0;
-
 binary_sensor:
-  # Senzory požadavků na větrání - vstupní signály z fyzických přítomnostních senzorů
-  # Jsou aktivovány LOW (inverted: true)
-  # Spouštějí odpovídající logiku větrání s možností zpoždění a doběhu
-  
-  - platform: gpio
-    id: vzt_wc_prizemi
-    pin: {number: GPIO42, mode: {input: true, pullup: true}, inverted: true}
-    name: "Požadavek větrání WC přízemí"
-    on_press: [script.execute: script_safety_watchdog, script.execute: script_wc_logic]
-    on_release: [script.execute: script_safety_watchdog, script.execute: script_wc_overrun]
-
-  - platform: gpio
-    id: vzt_wc_patro
-    pin: {number: GPIO41, mode: {input: true, pullup: true}, inverted: true}
-    name: "Požadavek  větrání WC patro"
-    on_press: [script.execute: script_safety_watchdog, script.execute: script_wc_logic]
-    on_release: [script.execute: script_safety_watchdog, script.execute: script_wc_overrun]
-
-  - platform: gpio
-    id: vzt_koupelna
-    pin: {number: GPIO40, mode: {input: true, pullup: true}, inverted: true}
-    name: "Požadavek  větrání Koupelna"
-    on_press: 
-      - script.stop: script_bath_overrun  # Zrušit starý doběh
-      - script.execute: script_safety_watchdog
-      - script.execute: rk2_manager  # Okamžitě spustit větrání (bez zpoždění jako WC)
-    on_release: [script.execute: script_safety_watchdog, script.execute: script_bath_overrun]
+  # ============================================================================
+  # VSTUPNÍ SENZORY - Každý má vlastní oddělené scripty
+  # ============================================================================
 
   - platform: gpio
     id: vzt_kuchyn
     pin: {number: GPIO39, mode: {input: true, pullup: true}, inverted: true}
-    name: "Požadavek  větrání kuchyň"
-    on_press: [script.execute: script_safety_watchdog, script.execute: rk2_manager]
-    on_release: [script.execute: script_safety_watchdog, script.execute: script_global_turn_off_check]
+    name: "Požadavek větrání kuchyň"
+    on_press: 
+      - script.execute: script_safety_watchdog
+      - script.execute: script_kuchyn_on
+    on_release: 
+      - script.execute: script_kuchyn_off
+
+  - platform: gpio
+    id: vzt_koupelna
+    pin: {number: GPIO40, mode: {input: true, pullup: true}, inverted: true}
+    name: "Požadavek větrání Koupelna"
+    on_press: 
+      - script.execute: script_safety_watchdog
+      - script.stop: script_koupelna_off  # Zrušit doběh
+      - script.execute: script_koupelna_on
+    on_release: 
+      - script.execute: script_koupelna_off
+
+  - platform: gpio
+    id: vzt_wc_prizemi
+    pin: {number: GPIO42, mode: {input: true, pullup: true}, inverted: true}
+    name: "Požadavek větrání WC přízemí"
+    on_press: 
+      - script.execute: script_safety_watchdog
+      - script.stop: script_wc_prizemi_off  # Zrušit doběh
+      - script.execute: script_wc_prizemi_on
+    on_release: 
+      - script.execute: script_wc_prizemi_off
+
+  - platform: gpio
+    id: vzt_wc_patro
+    pin: {number: GPIO41, mode: {input: true, pullup: true}, inverted: true}
+    name: "Požadavek větrání WC patro"
+    on_press: 
+      - script.execute: script_safety_watchdog
+      - script.stop: script_wc_patro_off  # Zrušit doběh
+      - script.execute: script_wc_patro_on
+    on_release: 
+      - script.execute: script_wc_patro_off
 
   # Binární senzory pro sledování stavu relé topení
   - platform: template
@@ -268,7 +299,7 @@ binary_sensor:
     icon: mdi:arrows-vertical
     lambda: |-
       return id(switch_rele_klapka_bypass).state;
-
+      
 #------------------------------------------------------------------------------------
 #                            HW part definitions (Outputs)
 #------------------------------------------------------------------------------------
@@ -436,8 +467,11 @@ switch:
     id: switch_ha_externi
     optimistic: true
     icon: mdi:fan
-    on_turn_on: [script.execute: script_safety_watchdog, script.execute: rk2_manager]
-    on_turn_off: [script.execute: script_safety_watchdog, script.execute: script_global_turn_off_check]
+    on_turn_on: 
+      - script.execute: script_safety_watchdog
+      - script.execute: script_ha_on
+    on_turn_off: 
+      - script.execute: script_ha_off
 
   - platform: template
     name: "VZT - Topení aktivní"
@@ -462,7 +496,6 @@ switch:
     icon: mdi:sun
     on_turn_on: [switch.turn_on: switch_rele_klapka_bypass]
     on_turn_off: [switch.turn_off: switch_rele_klapka_bypass]
-
 text_sensor:
   - platform: ethernet_info
     ip_address:
@@ -475,6 +508,48 @@ text_sensor:
       sprintf(str, "%d", id(last_ventilation_unix));
       return {str};
 
+  # NOVÝ - Důvod nárazového větrání
+  - platform: template
+    name: "VZT - Důvod nárazového větrání"
+    id: vzt_boost_reason
+    icon: "mdi:information-outline"
+    update_interval: 1s
+    lambda: |-
+      std::vector<std::string> reasons;
+    
+      // Kontrola jednotlivých aktivních vstupů
+      if (id(flag_wc_prizemi_active)) {
+        reasons.push_back("WC přízemí");
+      }
+      if (id(flag_wc_patro_active)) {
+        reasons.push_back("WC patro");
+      }
+      if (id(flag_koupelna_active)) {
+        reasons.push_back("Koupelna");
+      }
+      if (id(flag_kuchyn_active)) {
+        reasons.push_back("Kuchyň");
+      }
+      if (id(flag_ha_active)) {
+        reasons.push_back("HA externí");
+      }
+    
+      // Pokud není žádný důvod
+      if (reasons.empty()) {
+        return std::string("Žádný");
+      }
+    
+      // Spojení všech důvodů čárkou
+      std::string result = "";
+      for (size_t i = 0; i < reasons.size(); i++) {
+        result += reasons[i];
+        if (i < reasons.size() - 1) {
+          result += ", ";
+        }
+      }
+    
+      return result;
+      
 select:
   - platform: template
     name: "VZT - Aktuální režim"
@@ -488,7 +563,7 @@ select:
       - "Větrání (Profuk) + Topení"
       - "Pouze Topení"
     lambda: |-
-      bool boost = id(vzt_wc_prizemi).state || id(vzt_wc_patro).state || id(vzt_koupelna).state || id(vzt_kuchyn).state || id(switch_ha_externi).state;
+      bool boost = id(flag_kuchyn_active) || id(flag_ha_active) || id(flag_koupelna_active) || id(flag_wc_prizemi_active) || id(flag_wc_patro_active);
       bool topeni = id(switch_topeni_on).state;
       bool profuk = id(script_periodic_ventilation).is_running();
 
@@ -591,14 +666,13 @@ number:
     optimistic: true
     unit_of_measurement: "%"
     icon: mdi:fan
-
 #------------------------------------------------------------------------------------
-#                         Logika regulatoru (Manager)
+#                         Logika regulatoru (Manager) - OPRAVENO
 #------------------------------------------------------------------------------------
 script:
   # RK2 Manager - Centrální řídící logika ATREA RK2 jednotky
   # Řídí větrání a topení na základě:
-  # - Požadavků ze senzorů (WC, Koupelna, Kuchyň)
+  # - Požadavků ze senzorů (WC přízemí, WC patro, Koupelna, Kuchyň)
   # - Externího požadavku z HA (switch_ha_externi)
   # - Stavu topení (switch_topeni_on, switch_topeni_turbo)
   # - Periodického větrání (profuk)
@@ -618,7 +692,14 @@ script:
     then:
       - lambda: |-
           // Příznak boost: zda je aktivní některý požadavek na větrání
-          bool boost = id(vzt_wc_prizemi).state || id(vzt_wc_patro).state || id(vzt_koupelna).state || id(vzt_kuchyn).state || id(switch_ha_externi).state;
+          // POZOR: Kontrolujeme interní flagy, ne přímo senzory (kvůli zpožděním a doběhům)
+          bool boost_kuchyn = id(flag_kuchyn_active);
+          bool boost_ha = id(flag_ha_active);
+          bool boost_koupelna = id(flag_koupelna_active);
+          bool boost_wc_prizemi = id(flag_wc_prizemi_active);
+          bool boost_wc_patro = id(flag_wc_patro_active);
+        
+          bool boost = boost_kuchyn || boost_ha || boost_koupelna || boost_wc_prizemi || boost_wc_patro;
           bool topeni = id(switch_topeni_on).state;
           bool turbo = id(switch_topeni_turbo).state;
           bool profuk = id(script_periodic_ventilation).is_running();
@@ -659,70 +740,187 @@ script:
           auto cc = id(light_cirkulace).make_call(); cc.set_brightness(cirk/100.0f); cc.set_state(cirk>0); cc.perform();
 
           // Řízení externích zařízení topení
-          // Pokud je topení aktivní, zapnout čerpadlo a ventil topné vody
-          // Jinak je vypnout
           if (topeni) {
-            id(switch_rele_cerpadlo_topeni).turn_on();           // Zapnout čerpadlo topení
-            id(switch_rele_el_ventil_topeni_vzt).turn_on();      // Zapnout ventil topné vody
+            id(switch_rele_cerpadlo_topeni).turn_on();
+            id(switch_rele_el_ventil_topeni_vzt).turn_on();
           } else {
-            id(switch_rele_cerpadlo_topeni).turn_off();          // Vypnout čerpadlo topení
-            id(switch_rele_el_ventil_topeni_vzt).turn_off();     // Vypnout ventil topné vody
+            id(switch_rele_cerpadlo_topeni).turn_off();
+            id(switch_rele_el_ventil_topeni_vzt).turn_off();
           }
-  # Bezpečnostní kontrola vypnutí - spustí se když je vypnut veškerý požadavek na větrání
-  # Zaznamenává čas posledního běhu větrání pro výpočet periodického větrání
+
+  # ============================================================================
+  # KUCHYŇ - Přímé zapnutí/vypnutí bez logiky
+  # ============================================================================
+  - id: script_kuchyn_on
+    mode: restart
+    then:
+      - globals.set:
+          id: flag_kuchyn_active
+          value: 'true'
+      - script.execute: rk2_manager
+
+  - id: script_kuchyn_off
+    mode: restart
+    then:
+      - globals.set:
+          id: flag_kuchyn_active
+          value: 'false'
+      - script.execute: script_global_turn_off_check
+
+  # ============================================================================
+  # HA EXTERNÍ - Přímé zapnutí/vypnutí
+  # ============================================================================
+  - id: script_ha_on
+    mode: restart
+    then:
+      - globals.set:
+          id: flag_ha_active
+          value: 'true'
+      - script.execute: rk2_manager
+
+  - id: script_ha_off
+    mode: restart
+    then:
+      - globals.set:
+          id: flag_ha_active
+          value: 'false'
+      - script.execute: script_global_turn_off_check
+
+  # ============================================================================
+  # KOUPELNA - Okamžité zapnutí + doběh (reset při opětovném zapnutí)
+  # ============================================================================
+  - id: script_koupelna_on
+    mode: restart  # Restart = zruší předchozí běh (včetně doběhu)
+    then:
+      - globals.set:
+          id: flag_koupelna_active
+          value: 'true'
+      - script.execute: rk2_manager  # Okamžitě spustit větrání
+
+  - id: script_koupelna_off
+    mode: restart
+    then:
+      # Spustit doběh
+      - delay: !lambda "return id(bath_run_over).state * 1000;"
+      # Po doběhu vypnout
+      - globals.set:
+          id: flag_koupelna_active
+          value: 'false'
+      - script.execute: script_global_turn_off_check
+
+  # ============================================================================
+  # WC PŘÍZEMÍ - Zpoždění zapnutí + doběh
+  # Logika:
+  # - Při zapnutí: čeká zpoždění, pak zapne větrání
+  # - Při vypnutí během zpoždění: zruší celý script (= reset zpoždění)
+  # - Při vypnutí po zapnutí: prodlouží doběh
+  # ============================================================================
+  - id: script_wc_prizemi_on
+    mode: restart  # Restart = zruší předchozí zpoždění i doběh
+    then:
+      # Zpoždění zapnutí
+      - delay: !lambda "return id(wc_delay_start).state * 1000;"
+      # Po zpoždění zapnout větrání
+      - globals.set:
+          id: flag_wc_prizemi_active
+          value: 'true'
+      - script.execute: rk2_manager
+
+  - id: script_wc_prizemi_off
+    mode: restart
+    then:
+      # Pokud je větrání aktivní, spustit doběh
+      - if:
+          condition:
+            lambda: 'return id(flag_wc_prizemi_active);'
+          then:
+            # Doběh
+            - delay: !lambda "return id(wc_run_over).state * 1000;"
+            # Po doběhu vypnout
+            - globals.set:
+                id: flag_wc_prizemi_active
+                value: 'false'
+            - script.execute: script_global_turn_off_check
+          else:
+            # Pokud větrání neběží (vypnuto během zpoždění), jen zrušit script_wc_prizemi_on
+            - script.stop: script_wc_prizemi_on
+
+  # ============================================================================
+  # WC PATRO - Zpoždění zapnutí + doběh (stejná logika jako WC přízemí)
+  # ============================================================================
+  - id: script_wc_patro_on
+    mode: restart
+    then:
+      # Zpoždění zapnutí
+      - delay: !lambda "return id(wc_delay_start).state * 1000;"
+      # Po zpoždění zapnout větrání
+      - globals.set:
+          id: flag_wc_patro_active
+          value: 'true'
+      - script.execute: rk2_manager
+
+  - id: script_wc_patro_off
+    mode: restart
+    then:
+      # Pokud je větrání aktivní, spustit doběh
+      - if:
+          condition:
+            lambda: 'return id(flag_wc_patro_active);'
+          then:
+            # Doběh
+            - delay: !lambda "return id(wc_run_over).state * 1000;"
+            # Po doběhu vypnout
+            - globals.set:
+                id: flag_wc_patro_active
+                value: 'false'
+            - script.execute: script_global_turn_off_check
+          else:
+            # Pokud větrání neběží (vypnuto během zpoždění), jen zrušit script
+            - script.stop: script_wc_patro_on
+
+  # ============================================================================
+  # Bezpečnostní kontrola vypnutí
+  # ============================================================================
   - id: script_global_turn_off_check
     then:
       - if:
           condition:
-            and:
-              - binary_sensor.is_off: vzt_wc_prizemi
-              - binary_sensor.is_off: vzt_wc_patro
-              - binary_sensor.is_off: vzt_koupelna
-              - binary_sensor.is_off: vzt_kuchyn
-              - switch.is_off: switch_ha_externi
+            lambda: |-
+              return !id(flag_kuchyn_active) && 
+                    !id(flag_ha_active) && 
+                    !id(flag_koupelna_active) && 
+                    !id(flag_wc_prizemi_active) && 
+                    !id(flag_wc_patro_active);
           then:
-            - script.stop: script_safety_watchdog  # Zrušit watchdog timeout
-            - script.execute: rk2_manager  # Zastavit větrání (nebude aktivní boost)
+            - script.stop: script_safety_watchdog
+            - script.execute: rk2_manager
             - globals.set: {id: last_ventilation_unix, value: !lambda "return id(sntp_time).now().timestamp;"}
             - globals.set: {id: last_ventilation_millis, value: !lambda "return millis() / 1000;"}
 
-  # Watchdog bezpečnosti - zastavuje větrání po 2 hodinách bez nového požadavku
-  # Prevence nekonečného chodu větrání v případě selhání senzoru
+  # ============================================================================
+  # Watchdog bezpečnosti - 2 hodiny timeout
+  # ============================================================================
   - id: script_safety_watchdog
     mode: restart
     then:
-      - delay: 7200s  # 2 hodiny
-      - script.execute: rk2_manager  # Vypne vše, protože boost bude off
+      - delay: 7200s
+      - globals.set: {id: flag_kuchyn_active, value: 'false'}
+      - globals.set: {id: flag_ha_active, value: 'false'}
+      - globals.set: {id: flag_koupelna_active, value: 'false'}
+      - globals.set: {id: flag_wc_prizemi_active, value: 'false'}
+      - globals.set: {id: flag_wc_patro_active, value: 'false'}
+      - script.execute: rk2_manager
 
-  # Logika pro WC - Zpoždění startu + doběh
-  - id: script_wc_logic
-    mode: restart
-    then:
-      - delay: !lambda "return id(wc_delay_start).state * 1000;"  # Zpoždění startu před zapnutím
-      - script.execute: rk2_manager  # Spustit větrání
-
-  # Doběh po WC - Pokračuje v běhu po uvolnění senzoru WC
-  - id: script_wc_overrun
-    mode: restart
-    then:
-      - delay: !lambda "return id(wc_run_over).state * 1000;"
-      - script.execute: script_global_turn_off_check  # Kontrola vypnutí
-
-  # Doběh po Koupelně - Pokračuje v běhu po uvolnění senzoru koupelny
-  - id: script_bath_overrun
-    mode: restart
-    then:
-      - delay: !lambda "return id(bath_run_over).state * 1000;"
-      - script.execute: script_global_turn_off_check
-
-  # Periodické větrání - Běží 5 minut každou hodinu (nebo déle, pokud je v klidu)
+  # ============================================================================
+  # Periodické větrání
+  # ============================================================================
   - id: script_periodic_ventilation
     then:
       - script.execute: rk2_manager
-      - delay: 300s  # 5 minut větrání
-      - globals.set: {id: last_ventilation_unix, value: !lambda "return id(sntp_time).now().timestamp;" }
-      - script.execute: rk2_manager  # Zastavit větrání
-
+      - delay: 300s
+      - globals.set: {id: last_ventilation_unix, value: !lambda "return id(sntp_time).now().timestamp;"}
+      - script.execute: rk2_manager
+      
 interval:
   # Periodická kontrola - spouští větrání každou hodinu, pokud neběželo dlouhodobě
   # (více než 1 hodina bez větrání)
