@@ -915,10 +915,14 @@ script:
   # Periodické větrání
   # ============================================================================
   - id: script_periodic_ventilation
+    mode: single  # Pouze jeden běh najednou
     then:
+      - logger.log: "PROFUK: START"
       - script.execute: rk2_manager
-      - delay: 300s
+      - delay: 300s  # 5 minut větrání
+      - logger.log: "PROFUK: KONEC"
       - globals.set: {id: last_ventilation_unix, value: !lambda "return id(sntp_time).now().timestamp;"}
+      - globals.set: {id: last_ventilation_millis, value: !lambda "return millis() / 1000;"}
       - script.execute: rk2_manager
       
 interval:
@@ -928,6 +932,15 @@ interval:
     then:
       - if:
           condition:
-            lambda: 'return (id(sntp_time).now().timestamp - id(last_ventilation_unix)) > 3600;'
-          then: [script.execute: script_periodic_ventilation]
+            lambda: |-
+              // Profuk pouze pokud:
+              // 1. Neběží žádný boost
+              // 2. Uplynula více než 1 hodina od posledního větrání
+              bool boost = id(flag_kuchyn_active) || id(flag_ha_active) || 
+                          id(flag_koupelna_active) || id(flag_wc_prizemi_active) || 
+                          id(flag_wc_patro_active);
+              bool time_elapsed = (id(sntp_time).now().timestamp - id(last_ventilation_unix)) > 3600;
+              return !boost && time_elapsed;
+          then: 
+            - script.execute: script_periodic_ventilation
 
