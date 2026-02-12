@@ -549,19 +549,10 @@ text_sensor:
       }
     
       return result;
-      
-select:
   - platform: template
     name: "VZT - Aktuální režim"
     id: vzt_current_mode
     update_interval: 1s
-    options:
-      - "Klid"
-      - "Nárazové větrání"
-      - "Nárazové větrání + Topení"
-      - "Větrání (Profuk)"
-      - "Větrání (Profuk) + Topení"
-      - "Pouze Topení"
     lambda: |-
       bool boost = id(flag_kuchyn_active) || id(flag_ha_active) || id(flag_koupelna_active) || id(flag_wc_prizemi_active) || id(flag_wc_patro_active);
       bool topeni = id(switch_topeni_on).state;
@@ -569,23 +560,21 @@ select:
 
       if (boost) {
         if (topeni) {
-          return std::string("Nárazové větrání + Topení");
+          return std::string("Větrání + Topení");
         } else {
-          return std::string("Nárazové větrání");
+          return std::string("Větrání");
         }
       } else if (profuk) {
         if (topeni) {
-          return std::string("Větrání (Profuk) + Topení");
+          return std::string("Profuk + Topení");
         } else {
-          return std::string("Větrání (Profuk)");
+          return std::string("Profuk");
         }
       } else if (topeni) {
         return std::string("Pouze Topení");
       }
       return std::string("Klid");
-    set_action:
-      then:
-        - logger.log: "VZT režim je read-only (určen automaticky)"
+
 
 number:
   # Nastavení zpoždění a doběhu větrání
