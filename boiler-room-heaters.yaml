@@ -238,7 +238,7 @@ text_sensor:
   - platform: template
     name: "Stav regulátoru"
     id: stav_regulatoru
-    update_interval: 10s
+    update_interval: never
 
 interval:
   # LED status indikace - každou sekundu
@@ -277,7 +277,7 @@ interval:
           bool pump_should_run = false;
           bool emergency_mode = false;
           bool sensor_error = false;
-          String status_text = "Neaktivní";
+          std::string status_text = "Neaktivní";
           
           float temp_kotel_vystup = id(teplota_kotel_vystup).state;
           float temp_kotel_vrat = id(teplota_kotel_vrat).state;
@@ -303,7 +303,11 @@ interval:
             if (temp_kotel_vystup > havarijni_limit) {
               pump_should_run = true;
               emergency_mode = true;
-              status_text = "HAVÁRIE - Teplota " + to_string((int)temp_kotel_vystup) + "°C > " + to_string((int)havarijni_limit) + "°C";
+              
+              char buffer[100];
+              snprintf(buffer, sizeof(buffer), "HAVÁRIE - Teplota %d°C > %d°C", 
+                       (int)temp_kotel_vystup, (int)havarijni_limit);
+              status_text = buffer;
               
               if (!last_emergency_state) {
                 ESP_LOGE("regulator", "HAVÁRIE! Teplota výstupu %.1f°C překročila limit %.1f°C - ZAPÍNÁM ČERPADLO!", 
@@ -326,21 +330,34 @@ interval:
                 // Hystereze - zapnout při vyšším rozdílu, vypnout při nižším
                 if (!current_pump_state && rozdil >= rozdil_zapnuti) {
                   pump_should_run = true;
-                  status_text = "Regulace ZAP - Rozdíl " + to_string((int)rozdil) + "°C ≥ " + to_string((int)rozdil_zapnuti) + "°C";
+                  
+                  char buffer[100];
+                  snprintf(buffer, sizeof(buffer), "Regulace ZAP - Rozdíl %d°C >= %d°C", 
+                           (int)rozdil, (int)rozdil_zapnuti);
+                  status_text = buffer;
+                  
                   ESP_LOGI("regulator", "Zapínám čerpadlo: Rozdíl teplot %.1f°C >= %.1f°C (Výstup: %.1f°C, Vrát: %.1f°C)", 
                            rozdil, rozdil_zapnuti, temp_kotel_vystup, temp_kotel_vrat);
                 } else if (current_pump_state && rozdil <= rozdil_vypnuti) {
                   pump_should_run = false;
-                  status_text = "Regulace VYP - Rozdíl " + to_string((int)rozdil) + "°C ≤ " + to_string((int)rozdil_vypnuti) + "°C";
+                  
+                  char buffer[100];
+                  snprintf(buffer, sizeof(buffer), "Regulace VYP - Rozdíl %d°C <= %d°C", 
+                           (int)rozdil, (int)rozdil_vypnuti);
+                  status_text = buffer;
+                  
                   ESP_LOGI("regulator", "Vypínám čerpadlo: Rozdíl teplot %.1f°C <= %.1f°C (Výstup: %.1f°C, Vrát: %.1f°C)", 
                            rozdil, rozdil_vypnuti, temp_kotel_vystup, temp_kotel_vrat);
                 } else {
                   pump_should_run = current_pump_state;
+                  
+                  char buffer[100];
                   if (current_pump_state) {
-                    status_text = "Regulace BĚH - Rozdíl " + to_string((int)rozdil) + "°C";
+                    snprintf(buffer, sizeof(buffer), "Regulace BĚH - Rozdíl %d°C", (int)rozdil);
                   } else {
-                    status_text = "Regulace ČEKÁ - Rozdíl " + to_string((int)rozdil) + "°C";
+                    snprintf(buffer, sizeof(buffer), "Regulace ČEKÁ - Rozdíl %d°C", (int)rozdil);
                   }
+                  status_text = buffer;
                 }
               } else {
                 status_text = "Automatika vypnuta";
