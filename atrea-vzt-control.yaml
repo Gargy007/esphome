@@ -93,21 +93,28 @@ globals:
     initial_value: 'false'
 
 logger:
-  level: WARN  # Globální úroveň - potlačí většinu debug výpisů
+  level: INFO  # Globální úroveň INFO
   logs:
     # Potlačit opakující se senzory
     sensor: ERROR
     text_sensor: ERROR
     dallas.temp.sensor: ERROR
-  
+    binary_sensor: WARN  # Potlačit binary_sensor debug
+    
     # Potlačit systémové komponenty
     component: ERROR
     api: WARN
     ota: WARN
     mdns: ERROR
     ethernet: WARN
-  
-    # Povolit pouze vlastní scripty a důležité události
+    wifi: ERROR
+    
+    # Potlačit AC dimmer a light komponenty (hodně verbose)
+    ac_dimmer: WARN
+    light: WARN
+    output: WARN
+    
+    # Povolit pouze důležité
     script: INFO
     switch: INFO
     lambda: INFO
