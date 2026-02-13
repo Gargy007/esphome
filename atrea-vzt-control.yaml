@@ -91,11 +91,26 @@ globals:
     type: bool
     restore_value: no
     initial_value: 'false'
-    
+
 logger:
-  level: INFO
+  level: WARN  # Globální úroveň - potlačí většinu debug výpisů
   logs:
-    sensor: WARN
+    # Potlačit opakující se senzory
+    sensor: ERROR
+    text_sensor: ERROR
+    dallas.temp.sensor: ERROR
+  
+    # Potlačit systémové komponenty
+    component: ERROR
+    api: WARN
+    ota: WARN
+    mdns: ERROR
+    ethernet: WARN
+  
+    # Povolit pouze vlastní scripty a důležité události
+    script: INFO
+    switch: INFO
+    lambda: INFO
 
 api:
   encryption:
@@ -245,9 +260,11 @@ binary_sensor:
     pin: {number: GPIO39, mode: {input: true, pullup: true}, inverted: true}
     name: "Požadavek větrání kuchyň"
     on_press: 
+      - logger.log: "🍳 KUCHYŇ: Senzor aktivován"
       - script.execute: script_safety_watchdog
       - script.execute: script_kuchyn_on
     on_release: 
+      - logger.log: "🍳 KUCHYŇ: Senzor uvolněn"
       - script.execute: script_kuchyn_off
 
   - platform: gpio
@@ -255,10 +272,12 @@ binary_sensor:
     pin: {number: GPIO40, mode: {input: true, pullup: true}, inverted: true}
     name: "Požadavek větrání Koupelna"
     on_press: 
+      - logger.log: "🛁 KOUPELNA: Senzor aktivován"
       - script.execute: script_safety_watchdog
       - script.stop: script_koupelna_off  # Zrušit doběh
       - script.execute: script_koupelna_on
     on_release: 
+      - logger.log: "🛁 KOUPELNA: Senzor uvolněn"
       - script.execute: script_koupelna_off
 
   - platform: gpio
@@ -266,10 +285,12 @@ binary_sensor:
     pin: {number: GPIO42, mode: {input: true, pullup: true}, inverted: true}
     name: "Požadavek větrání WC přízemí"
     on_press: 
+      - logger.log: "🚽 WC PŘÍZEMÍ: Senzor aktivován"
       - script.execute: script_safety_watchdog
       - script.stop: script_wc_prizemi_off  # Zrušit doběh
       - script.execute: script_wc_prizemi_on
     on_release: 
+      - logger.log: "🚽 WC PŘÍZEMÍ: Senzor uvolněn"
       - script.execute: script_wc_prizemi_off
 
   - platform: gpio
@@ -277,10 +298,12 @@ binary_sensor:
     pin: {number: GPIO41, mode: {input: true, pullup: true}, inverted: true}
     name: "Požadavek větrání WC patro"
     on_press: 
+      - logger.log: "🚽 WC PATRO: Senzor aktivován"
       - script.execute: script_safety_watchdog
       - script.stop: script_wc_patro_off  # Zrušit doběh
       - script.execute: script_wc_patro_on
     on_release: 
+      - logger.log: "🚽 WC PATRO: Senzor uvolněn"
       - script.execute: script_wc_patro_off
 
   # Binární senzory pro sledování stavu relé topení
@@ -473,9 +496,11 @@ switch:
     optimistic: true
     icon: mdi:fan
     on_turn_on: 
+      - logger.log: "🏠 HA EXTERNÍ: Zapnuto"
       - script.execute: script_safety_watchdog
       - script.execute: script_ha_on
     on_turn_off: 
+      - logger.log: "🏠 HA EXTERNÍ: Vypnuto"
       - script.execute: script_ha_off
 
   - platform: template
@@ -483,16 +508,24 @@ switch:
     id: switch_topeni_on
     optimistic: true
     icon: mdi:fire
-    on_turn_on: [script.execute: rk2_manager]
-    on_turn_off: [script.execute: rk2_manager]
+    on_turn_on: 
+      - logger.log: "🔥 TOPENÍ: Zapnuto"
+      - script.execute: rk2_manager
+    on_turn_off: 
+      - logger.log: "🔥 TOPENÍ: Vypnuto"
+      - script.execute: rk2_manager
 
   - platform: template
     name: "VZT - Topení na MAX (Turbo)"
     id: switch_topeni_turbo
     optimistic: true
     icon: mdi:lightning-bolt
-    on_turn_on: [script.execute: rk2_manager]
-    on_turn_off: [script.execute: rk2_manager]
+    on_turn_on: 
+      - logger.log: "⚡ TOPENÍ TURBO: Zapnuto"
+      - script.execute: rk2_manager
+    on_turn_off: 
+      - logger.log: "⚡ TOPENÍ TURBO: Vypnuto"
+      - script.execute: rk2_manager
 
   - platform: template
     name: "VZT - Letní režim (Bypass)"
@@ -600,6 +633,12 @@ number:
     restore_value: true
     unit_of_measurement: "s"
     icon: mdi:timer-sand
+    on_value:
+      then:
+        - logger.log:
+            format: "⚙️ WC Zpoždění startu: %.0f s"
+            args: ['x']
+            
   - platform: template
     name: "VZT WC - Doběh"
     id: wc_run_over
@@ -611,6 +650,12 @@ number:
     restore_value: true
     unit_of_measurement: "s"
     icon: mdi:timer-sand
+    on_value:
+      then:
+        - logger.log:
+            format: "⚙️ WC Doběh: %.0f s"
+            args: ['x']
+            
   - platform: template
     name: "VZT Koupelna - Doběh"
     id: bath_run_over
@@ -622,6 +667,11 @@ number:
     restore_value: true
     unit_of_measurement: "s"
     icon: mdi:timer-sand
+    on_value:
+      then:
+        - logger.log:
+            format: "⚙️ Koupelna Doběh: %.0f s"
+            args: ['x']
   
   # Nastavení otáček - Procenta výkonu pro různé režimy
   
@@ -635,6 +685,13 @@ number:
     optimistic: true
     unit_of_measurement: "%"
     icon: mdi:fan
+    on_value:
+      then:
+        - logger.log:
+            format: "⚙️ Výkon Větrání MALÝ: %.0f%%"
+            args: ['x']
+        - script.execute: rk2_manager
+        
   - platform: template
     name: "VZT Výkon Větrání VELKÝ"
     id: pwr_vet_high
@@ -645,6 +702,13 @@ number:
     optimistic: true
     unit_of_measurement: "%"
     icon: mdi:fan
+    on_value:
+      then:
+        - logger.log:
+            format: "⚙️ Výkon Větrání VELKÝ: %.0f%%"
+            args: ['x']
+        - script.execute: rk2_manager
+        
   - platform: template
     name: "VZT Výkon Cirkulace MALÝ"
     id: pwr_cirk_low
@@ -655,6 +719,13 @@ number:
     optimistic: true
     unit_of_measurement: "%"
     icon: mdi:fan
+    on_value:
+      then:
+        - logger.log:
+            format: "⚙️ Výkon Cirkulace MALÝ: %.0f%%"
+            args: ['x']
+        - script.execute: rk2_manager
+        
   - platform: template
     name: "VZT Výkon Cirkulace VELKÝ"
     id: pwr_cirk_high
@@ -665,6 +736,12 @@ number:
     optimistic: true
     unit_of_measurement: "%"
     icon: mdi:fan
+    on_value:
+      then:
+        - logger.log:
+            format: "⚙️ Výkon Cirkulace VELKÝ: %.0f%%"
+            args: ['x']
+        - script.execute: rk2_manager
 #------------------------------------------------------------------------------------
 #                         Logika regulatoru (Manager) - OPRAVENO
 #------------------------------------------------------------------------------------
@@ -704,50 +781,63 @@ script:
           bool profuk = id(script_periodic_ventilation).is_running();
 
           float dac = 0.0, vet = 0.0, cirk = 0.0;
+          std::string mode = "";
 
           if (boost) {
             // BOOST režim: Požadavek na větrání je aktivní
             if (topeni) { 
               // Boost + Topení: Velké větrání + malá cirkulace
-              dac = 0.8; vet = id(pwr_vet_high).state; cirk = id(pwr_cirk_low).state; 
+              dac = 0.8; vet = id(pwr_vet_high).state; cirk = id(pwr_cirk_low).state;
+              mode = "BOOST + TOPENÍ";
             }
             else { 
               // Boost bez topení: Velké větrání bez cirkulace
-              dac = 1.0; vet = id(pwr_vet_high).state; cirk = 0.0; 
+              dac = 1.0; vet = id(pwr_vet_high).state; cirk = 0.0;
+              mode = "BOOST";
             }
           } else if (profuk) {
             // PERIODICKÉ VĚTRÁNÍ: Běh naplánovaného větrání (bez boost)
             if (topeni) { 
               // Profuk + Topení: Malé větrání + malá cirkulace
-              dac = 0.5; vet = id(pwr_vet_low).state; cirk = id(pwr_cirk_low).state; 
+              dac = 0.5; vet = id(pwr_vet_low).state; cirk = id(pwr_cirk_low).state;
+              mode = "PROFUK + TOPENÍ";
             }
             else { 
               // Profuk bez topení: Malé větrání bez cirkulace
-              dac = 1.0; vet = id(pwr_vet_low).state; cirk = 0.0; 
+              dac = 1.0; vet = id(pwr_vet_low).state; cirk = 0.0;
+              mode = "PROFUK";
             }
           } else if (topeni) {
             // TOPENÍ BEZ VĚTRÁNÍ: Pouze cirkulace
             dac = 0.0; vet = 0.0; cirk = turbo ? id(pwr_cirk_high).state : id(pwr_cirk_low).state;
+            mode = turbo ? "TOPENÍ TURBO" : "TOPENÍ";
+          } else {
+            mode = "KLID";
           }
+
+          // LOGOVÁNÍ ZMĚNY REŽIMU
+          ESP_LOGI("RK2", "Režim: %s | DAC: %.1f | Větrání: %.0f%% | Cirkulace: %.0f%%", 
+                   mode.c_str(), dac, vet, cirk);
 
           // Aplikace vypočítaných hodnot na výstupy
           id(dac_vystup_1).set_level(dac);
           id(dac_current_level) = dac;  // Uložit aktuální DAC hodnotu
-          id(vet_current_pwr) = vet;    // Uložit aktuální výkon větrání
-          id(cirk_current_pwr) = cirk;  // Uložit aktuální výkon cirkulace
           
-          // Logování změn režimu
-          char mode_str[60];
-          if (boost) {
-            sprintf(mode_str, "BOOST %s: Vét %.0f%%, Cirk %.0f%%", topeni ? "+ TOPENÍ" : "bez topení", vet, cirk);
-          } else if (profuk) {
-            sprintf(mode_str, "PROFUK %s: Vét %.0f%%, Cirk %.0f%%", topeni ? "+ TOPENÍ" : "bez topení", vet, cirk);
-          } else if (topeni) {
-            sprintf(mode_str, "TOPENÍ: Cirkulace %.0f%%", cirk);
+          // LOGOVÁNÍ ZMĚNY VÝKONU VĚTRÁNÍ (pokud se změnil)
+          if (id(vet_current_pwr) != vet) {
+            ESP_LOGI("MOTOR", "🌀 Větrání: %.0f%% → %.0f%%", id(vet_current_pwr), vet);
+            id(vet_current_pwr) = vet;
           } else {
-            sprintf(mode_str, "Režim KLID");
+            id(vet_current_pwr) = vet;
           }
-          ESP_LOGI("RK2_MANAGER", "%s", mode_str);
+          
+          // LOGOVÁNÍ ZMĚNY VÝKONU CIRKULACE (pokud se změnil)
+          if (id(cirk_current_pwr) != cirk) {
+            ESP_LOGI("MOTOR", "♨️  Cirkulace: %.0f%% → %.0f%%", id(cirk_current_pwr), cirk);
+            id(cirk_current_pwr) = cirk;
+          } else {
+            id(cirk_current_pwr) = cirk;
+          }
           
           auto cv = id(light_vetrani).make_call(); cv.set_brightness(vet/100.0f); cv.set_state(vet>0); cv.perform();
           auto cc = id(light_cirkulace).make_call(); cc.set_brightness(cirk/100.0f); cc.set_state(cirk>0); cc.perform();
@@ -767,6 +857,7 @@ script:
   - id: script_kuchyn_on
     mode: restart
     then:
+      - logger.log: "🍳 KUCHYŇ: Zapnuto"
       - globals.set:
           id: flag_kuchyn_active
           value: 'true'
@@ -775,6 +866,7 @@ script:
   - id: script_kuchyn_off
     mode: restart
     then:
+      - logger.log: "🍳 KUCHYŇ: Vypnuto"
       - globals.set:
           id: flag_kuchyn_active
           value: 'false'
@@ -786,6 +878,7 @@ script:
   - id: script_ha_on
     mode: restart
     then:
+      - logger.log: "🏠 HA EXTERNÍ: Zapnuto"
       - globals.set:
           id: flag_ha_active
           value: 'true'
@@ -794,6 +887,7 @@ script:
   - id: script_ha_off
     mode: restart
     then:
+      - logger.log: "🏠 HA EXTERNÍ: Vypnuto"
       - globals.set:
           id: flag_ha_active
           value: 'false'
@@ -805,6 +899,7 @@ script:
   - id: script_koupelna_on
     mode: restart  # Restart = zruší předchozí běh (včetně doběhu)
     then:
+      - logger.log: "🛁 KOUPELNA: Zapnuto"
       - globals.set:
           id: flag_koupelna_active
           value: 'true'
@@ -813,9 +908,11 @@ script:
   - id: script_koupelna_off
     mode: restart
     then:
+      - logger.log: "🛁 KOUPELNA: Doběh zahájen"
       # Spustit doběh
       - delay: !lambda "return id(bath_run_over).state * 1000;"
       # Po doběhu vypnout
+      - logger.log: "🛁 KOUPELNA: Vypnuto po doběhu"
       - globals.set:
           id: flag_koupelna_active
           value: 'false'
@@ -831,9 +928,11 @@ script:
   - id: script_wc_prizemi_on
     mode: restart  # Restart = zruší předchozí zpoždění i doběh
     then:
+      - logger.log: "🚽 WC PŘÍZEMÍ: Zpoždění startu"
       # Zpoždění zapnutí
       - delay: !lambda "return id(wc_delay_start).state * 1000;"
       # Po zpoždění zapnout větrání
+      - logger.log: "🚽 WC PŘÍZEMÍ: Zapnuto"
       - globals.set:
           id: flag_wc_prizemi_active
           value: 'true'
@@ -847,15 +946,18 @@ script:
           condition:
             lambda: 'return id(flag_wc_prizemi_active);'
           then:
+            - logger.log: "🚽 WC PŘÍZEMÍ: Doběh zahájen"
             # Doběh
             - delay: !lambda "return id(wc_run_over).state * 1000;"
             # Po doběhu vypnout
+            - logger.log: "🚽 WC PŘÍZEMÍ: Vypnuto po doběhu"
             - globals.set:
                 id: flag_wc_prizemi_active
                 value: 'false'
             - script.execute: script_global_turn_off_check
           else:
             # Pokud větrání neběží (vypnuto během zpoždění), jen zrušit script_wc_prizemi_on
+            - logger.log: "🚽 WC PŘÍZEMÍ: Zrušeno během zpoždění"
             - script.stop: script_wc_prizemi_on
 
   # ============================================================================
@@ -864,9 +966,11 @@ script:
   - id: script_wc_patro_on
     mode: restart
     then:
+      - logger.log: "🚽 WC PATRO: Zpoždění startu"
       # Zpoždění zapnutí
       - delay: !lambda "return id(wc_delay_start).state * 1000;"
       # Po zpoždění zapnout větrání
+      - logger.log: "🚽 WC PATRO: Zapnuto"
       - globals.set:
           id: flag_wc_patro_active
           value: 'true'
@@ -880,15 +984,18 @@ script:
           condition:
             lambda: 'return id(flag_wc_patro_active);'
           then:
+            - logger.log: "🚽 WC PATRO: Doběh zahájen"
             # Doběh
             - delay: !lambda "return id(wc_run_over).state * 1000;"
             # Po doběhu vypnout
+            - logger.log: "🚽 WC PATRO: Vypnuto po doběhu"
             - globals.set:
                 id: flag_wc_patro_active
                 value: 'false'
             - script.execute: script_global_turn_off_check
           else:
             # Pokud větrání neběží (vypnuto během zpoždění), jen zrušit script
+            - logger.log: "🚽 WC PATRO: Zrušeno během zpoždění"
             - script.stop: script_wc_patro_on
 
   # ============================================================================
@@ -905,6 +1012,7 @@ script:
                     !id(flag_wc_prizemi_active) && 
                     !id(flag_wc_patro_active);
           then:
+            - logger.log: "✅ Všechny požadavky vypnuty - přechod do klidového režimu"
             - script.stop: script_safety_watchdog
             - script.execute: rk2_manager
             - globals.set: {id: last_ventilation_unix, value: !lambda "return id(sntp_time).now().timestamp;"}
@@ -916,7 +1024,13 @@ script:
   - id: script_safety_watchdog
     mode: restart
     then:
+      - logger.log: 
+          format: "⚠️ WATCHDOG: Spuštěn (timeout 2h)"
+          level: WARN
       - delay: 7200s
+      - logger.log:
+          format: "🚨 WATCHDOG: TIMEOUT! Nucené vypnutí všech požadavků"
+          level: ERROR
       - globals.set: {id: flag_kuchyn_active, value: 'false'}
       - globals.set: {id: flag_ha_active, value: 'false'}
       - globals.set: {id: flag_koupelna_active, value: 'false'}
@@ -930,10 +1044,10 @@ script:
   - id: script_periodic_ventilation
     mode: single  # Pouze jeden běh najednou
     then:
-      - logger.log: "PROFUK: START"
+      - logger.log: "💨 PROFUK: START (5 minut)"
       - script.execute: rk2_manager
       - delay: 300s  # 5 minut větrání
-      - logger.log: "PROFUK: KONEC"
+      - logger.log: "💨 PROFUK: KONEC"
       - globals.set: {id: last_ventilation_unix, value: !lambda "return id(sntp_time).now().timestamp;"}
       - globals.set: {id: last_ventilation_millis, value: !lambda "return millis() / 1000;"}
       - script.execute: rk2_manager
