@@ -91,6 +91,11 @@ globals:
     type: bool
     restore_value: no
     initial_value: 'false'
+  # Pro detekci změny stavu (bitová maska)
+  - id: last_state_hash
+    type: uint8_t
+    restore_value: no
+    initial_value: '0'
 
 logger:
   level: INFO  # Globální úroveň INFO
@@ -594,6 +599,7 @@ text_sensor:
       }
     
       return result;
+      
   - platform: template
     name: "VZT - Aktuální režim"
     id: vzt_current_mode
@@ -603,10 +609,25 @@ text_sensor:
       bool topeni = id(switch_topeni_on).state;
       bool profuk = id(script_periodic_ventilation).is_running();
 
-      // Debug logging
-      ESP_LOGI("SELECT_MODE", "boost=%d, topeni=%d, profuk=%d | WC_priz=%d, WC_pat=%d, Koup=%d, Kuch=%d, HA_ext=%d", 
-        boost, topeni, profuk, 
-        id(vzt_wc_prizemi).state, id(vzt_wc_patro).state, id(vzt_koupelna).state, id(vzt_kuchyn).state, id(switch_ha_externi).state);
+      // Vytvoření bitové masky stavu (pro detekci změny)
+      uint8_t current_hash = 0;
+      current_hash |= (boost ? 1 : 0) << 0;
+      current_hash |= (topeni ? 1 : 0) << 1;
+      current_hash |= (profuk ? 1 : 0) << 2;
+      current_hash |= (id(flag_wc_prizemi_active) ? 1 : 0) << 3;
+      current_hash |= (id(flag_wc_patro_active) ? 1 : 0) << 4;
+      current_hash |= (id(flag_koupelna_active) ? 1 : 0) << 5;
+      current_hash |= (id(flag_kuchyn_active) ? 1 : 0) << 6;
+      current_hash |= (id(flag_ha_active) ? 1 : 0) << 7;
+
+      // Logovat pouze při změně stavu
+      if (current_hash != id(last_state_hash)) {
+        ESP_LOGI("STATE_CHANGE", "boost=%d, topeni=%d, profuk=%d | WC_priz=%d, WC_pat=%d, Koup=%d, Kuch=%d, HA_ext=%d", 
+          boost, topeni, profuk, 
+          id(flag_wc_prizemi_active), id(flag_wc_patro_active), id(flag_koupelna_active), 
+          id(flag_kuchyn_active), id(flag_ha_active));
+        id(last_state_hash) = current_hash;
+      }
 
       if (boost) {
         if (topeni) {
