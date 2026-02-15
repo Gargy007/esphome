@@ -7,15 +7,16 @@
 # ║  • Řízení větrání přes DAC výstup (0.0-1.0) → RK2 manager                      ║
 # ║  • Řízení cirkulace a větrání přes PWM triaky (AC_DIMMER)                      ║
 # ║  • 4x senzory požadavků na větrání (GPIO) - WC, Koupelna, Kuchyň               ║
-# ║  • Periodické větrání (5 minut/hodinu, pokud není aktivní boost)               ║
+# ║  • Periodické větrání (2-20 minut, nastavitelné, pokud není aktivní boost)     ║
+# ║  • Topení radiátorů v koupelně (bez VZT systému)                               ║
 # ║  • Tepelné senzory pro diagnostiku (Dallas 1-Wire)                             ║
 # ║  • Monitoring tlaku na filtru (ADC)                                            ║
 # ║  • Watchdog bezpečnosti (2 hodiny timeout)                                     ║
 # ║                                                                                ║
 # ║  DAC VÝSTUP (dac_vystup_1) - Řízení RK2 režimů:                                ║
-# ║  • 0.0 = Pouze cirkulace (bez větrání) - TOPENÍONLY                            ║
-# ║  • 0.5 = Malé větrání + cirkulace - PERIODICKÉ VĚTRÁNÍ                         ║
-# ║  • 0.8 = Velké větrání + cirkulace - BOOST + TOPENÍ                            ║
+# ║  • 0.0 = Pouze cirkulace (bez větrání) - TOPENÍ VZT ONLY                       ║
+# ║  • 0.5 = Malé větrání + cirkulace - PERIODICKÉ VĚTRÁNÍ (PROFUK)                ║
+# ║  • 0.8 = Velké větrání + cirkulace - BOOST + TOPENÍ VZT                        ║
 # ║  • 1.0 = Velké větrání bez cirkulace - BOOST ONLY                              ║
 # ║                                                                                ║
 # ║  VSTUPNÍ SENZORY:                                                              ║
@@ -24,13 +25,18 @@
 # ║  • vzt_koupelna (GPIO40) - Požadavek na větrání Koupelny                       ║
 # ║  • vzt_kuchyn (GPIO39) - Požadavek na větrání Kuchyně                          ║
 # ║  • switch_ha_externi - Externí požadavek z Home Assistant                      ║
+# ║  • switch_topeni_radiatory - Aktivace topení radiátorů (samostatné od VZT)     ║
 # ║                                                                                ║
 # ║  VÝSTUPNÍ PRVKY:                                                               ║
-# ║  • dac_vystup_1 (GPIO 1-Wire DAC via I2C@0x60) - RK2 režim                     ║
+# ║  • dac_vystup_1 (GPIO 1-Wire DAC via I2C@0x60) - RK2 režim (VZT)               ║
 # ║  • output_vetrani (GPIO18 AC_DIMMER) - PWM větrání (0-100%)                    ║
 # ║  • output_cirkulace (GPIO17 AC_DIMMER) - PWM cirkulace (0-100%)                ║
-# ║  • Relé výstupy (GPIO45-48, GPIO21) - Topení, bypass, atd.                     ║
+# ║  • Relé výstupy (GPIO45-48, GPIO21) - Topení, bypass, čerpadlo, atd.           ║
 # ║  • LED indikátory (GPIO03=RED, GPIO15=GREEN)                                   ║
+# ║                                                                                ║
+# ║  REŽIMY TOPENÍ:                                                                ║
+# ║  • Topení VZT: Cirkulace VZT + elektromagnetický ventil (full topení)          ║
+# ║  • Radiátory: Jen čerpadlo topení (bez VZT ventilu, cílené pro koupelnu)       ║
 # ║                                                                                ║
 # ╚════════════════════════════════════════════════════════════════════════════════╝
 
@@ -70,7 +76,10 @@ globals:
     type: float
     restore_value: no
     initial_value: '0.0'
-  # NOVÉ FLAGY PRO AKTIVNÍ VĚTRÁNÍ
+  - id: flag_profuk_active
+    type: bool
+    restore_value: no
+    initial_value: 'false'
   - id: flag_kuchyn_active
     type: bool
     restore_value: no
@@ -88,6 +97,10 @@ globals:
     restore_value: no
     initial_value: 'false'
   - id: flag_wc_patro_active
+    type: bool
+    restore_value: no
+    initial_value: 'false'
+  - id: flag_topeni_radiatory_active
     type: bool
     restore_value: no
     initial_value: 'false'
@@ -566,6 +579,24 @@ switch:
           format: "☀️ LETNÍ REŽIM: Vypnut"
           level: INFO
       - switch.turn_off: switch_rele_klapka_bypass
+
+  - platform: template
+    name: "Topení - radiátory"
+    id: switch_topeni_radiatory
+    optimistic: true
+    icon: mdi:radiator
+    on_turn_on: 
+      - logger.log:
+          format: "🔥 RADIÁTORY: Zapnuty"
+          level: INFO
+      - globals.set: {id: flag_topeni_radiatory_active, value: 'true'}
+      - script.execute: rk2_manager
+    on_turn_off: 
+      - logger.log:
+          format: "🔥 RADIÁTORY: Vypnuty"
+          level: INFO
+      - globals.set: {id: flag_topeni_radiatory_active, value: 'false'}
+      - script.execute: rk2_manager
 text_sensor:
   - platform: ethernet_info
     ip_address:
@@ -627,7 +658,8 @@ text_sensor:
     lambda: |-
       bool boost = id(flag_kuchyn_active) || id(flag_ha_active) || id(flag_koupelna_active) || id(flag_wc_prizemi_active) || id(flag_wc_patro_active);
       bool topeni = id(switch_topeni_on).state;
-      bool profuk = id(script_periodic_ventilation).is_running();
+      bool profuk = id(flag_profuk_active);
+      bool radiatory = id(flag_topeni_radiatory_active);
 
       // Vytvoření bitové masky stavu (pro detekci změny)
       uint8_t current_hash = 0;
@@ -653,16 +685,18 @@ text_sensor:
         if (topeni) {
           return std::string("Větrání + Topení");
         } else {
-          return std::string("Větrání");
+          return std::string(radiatory ? "Větrání + radiátory" : "Větrání");
         }
       } else if (profuk) {
         if (topeni) {
           return std::string("Profuk + Topení");
         } else {
-          return std::string("Profuk");
+          return std::string(radiatory ? "Profuk + radiátory" : "Profuk");
         }
       } else if (topeni) {
-        return std::string("Pouze Topení");
+        return std::string("Topení");
+      } else if (radiatory) {
+        return std::string("Pouze radiátory");
       }
       return std::string("Klid");
 
@@ -790,6 +824,23 @@ number:
             format: "⚙️ Výkon Cirkulace VELKÝ: %.0f%%"
             args: ['x']
         - script.execute: rk2_manager
+
+  - platform: template
+    name: "VZT Profuk - Délka trvání"
+    id: profuk_duration
+    min_value: 2
+    max_value: 20
+    step: 1
+    initial_value: 5
+    optimistic: true
+    restore_value: true
+    unit_of_measurement: "min"
+    icon: mdi:timer
+    on_value:
+      then:
+        - logger.log:
+            format: "⚙️ Profuk Délka: %.0f minut"
+            args: ['x']
 #------------------------------------------------------------------------------------
 #                         Logika regulatoru (Manager) - OPRAVENO
 #------------------------------------------------------------------------------------
@@ -810,7 +861,8 @@ script:
         bool boost = boost_kuchyn || boost_ha || boost_koupelna || boost_wc_prizemi || boost_wc_patro;
         bool topeni = id(switch_topeni_on).state;
         bool turbo = id(switch_topeni_turbo).state;
-        bool profuk = id(script_periodic_ventilation).is_running();
+        bool profuk = id(flag_profuk_active);
+        bool radiatory = id(flag_topeni_radiatory_active);
 
         float dac = 0.0, vet = 0.0, cirk = 0.0;
         std::string mode = "";
@@ -825,7 +877,7 @@ script:
           else { 
             // Boost bez topení: Velké větrání bez cirkulace
             dac = 1.0; vet = id(pwr_vet_high).state; cirk = 0.0;
-            mode = "BOOST";
+            mode = radiatory ? "BOOST + radiátory" : "BOOST";
           }
         } else if (profuk) {
           // PERIODICKÉ VĚTRÁNÍ: Běh naplánovaného větrání (bez boost)
@@ -837,12 +889,16 @@ script:
           else { 
             // Profuk bez topení: Malé větrání bez cirkulace
             dac = 1.0; vet = id(pwr_vet_low).state; cirk = 0.0;
-            mode = "PROFUK";
+            mode = radiatory ? "PROFUK + radiátory" : "PROFUK";
           }
         } else if (topeni) {
           // TOPENÍ BEZ VĚTRÁNÍ: Pouze cirkulace
           dac = 0.0; vet = 0.0; cirk = turbo ? id(pwr_cirk_high).state : id(pwr_cirk_low).state;
           mode = turbo ? "TOPENÍ TURBO" : "TOPENÍ";
+        } else if (radiatory) {
+          // POUZE RADIÁTORY: Jen čerpadlo topení, bez větrání
+          dac = 0.0; vet = 0.0; cirk = 0.0;
+          mode = "Pouze radiátory";
         } else {
           mode = "KLID";
         }
@@ -878,11 +934,16 @@ script:
         auto cc = id(light_cirkulace).make_call(); cc.set_brightness(cirk/100.0f); cc.set_state(cirk>0); cc.perform();
 
         // Řízení externích zařízení topení
-        if (topeni) {
+        // Čerpadlo běží při topení i radiátorech
+        if (topeni || radiatory) {
           id(switch_rele_cerpadlo_topeni).turn_on();
-          id(switch_rele_el_ventil_topeni_vzt).turn_on();
         } else {
           id(switch_rele_cerpadlo_topeni).turn_off();
+        }
+        // Ventil běží jen při topení (ne při radiátorech!!)
+        if (topeni) {
+          id(switch_rele_el_ventil_topeni_vzt).turn_on();
+        } else {
           id(switch_rele_el_ventil_topeni_vzt).turn_off();
         }
 
@@ -1115,11 +1176,13 @@ script:
 - id: script_periodic_ventilation
   mode: single  # Pouze jeden běh najednou
   then:
+    - globals.set: {id: flag_profuk_active, value: 'true'}
     - logger.log:
-        format: "💨 PROFUK: START (5 minut)"
+        format: "💨 PROFUK: START"
         level: INFO
     - script.execute: rk2_manager
-    - delay: 300s  # 5 minut větrání
+    - delay: !lambda "return id(profuk_duration).state * 60 * 1000;"
+    - globals.set: {id: flag_profuk_active, value: 'false'}
     - logger.log:
         format: "💨 PROFUK: KONEC"
         level: INFO
