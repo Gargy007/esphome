@@ -773,6 +773,7 @@ text_sensor:
     lambda: |-
       bool boost = id(flag_kuchyn_active) || id(flag_ha_active) || id(flag_koupelna_active) || id(flag_wc_prizemi_active) || id(flag_wc_patro_active);
       bool topeni = id(switch_topeni_on).state;
+      bool turbo = id(switch_topeni_turbo).state;
       bool profuk = id(flag_profuk_active);
       bool radiatory = id(flag_topeni_radiatory_active);
       bool frost_protection = id(flag_frost_protection_active);
@@ -788,32 +789,60 @@ text_sensor:
       current_hash |= (id(flag_ha_active) ? 1 : 0) << 7;
 
       if (current_hash != id(last_state_hash)) {
-        ESP_LOGI("STATE_CHANGE", "boost=%d, topeni=%d, profuk=%d, frost=%d | WC_priz=%d, WC_pat=%d, Koup=%d, Kuch=%d, HA_ext=%d", 
-          boost, topeni, profuk, frost_protection,
+        ESP_LOGI("STATE_CHANGE", "boost=%d, topeni=%d, turbo=%d, profuk=%d, frost=%d | WC_priz=%d, WC_pat=%d, Koup=%d, Kuch=%d, HA_ext=%d", 
+          boost, topeni, turbo, profuk, frost_protection,
           id(flag_wc_prizemi_active), id(flag_wc_patro_active), id(flag_koupelna_active), 
           id(flag_kuchyn_active), id(flag_ha_active));
         id(last_state_hash) = current_hash;
       }
 
+      // ========================================================================
+      // ROZLIŠENÍ TOPENÍ vs. BOOST TOPENÍ
+      // ========================================================================
+      
       if (frost_protection) {
         return std::string("❄️ Zamrazovací ochrana");
-      } else if (boost) {
+      } 
+      else if (boost) {
+        // BOOST VĚTRÁNÍ
         if (topeni) {
-          return std::string("Větrání + Topení");
+          // Boost + Topení
+          if (turbo) {
+            return std::string("Větrání + Boost Topení ⚡");
+          } else {
+            return std::string("Větrání + Topení");
+          }
         } else {
+          // Boost bez topení
           return std::string(radiatory ? "Větrání + radiátory" : "Větrání");
         }
-      } else if (profuk) {
+      } 
+      else if (profuk) {
+        // PROFUK (periodické větrání)
         if (topeni) {
-          return std::string("Profuk + Topení");
+          // Profuk + Topení
+          if (turbo) {
+            return std::string("Profuk + Boost Topení ⚡");
+          } else {
+            return std::string("Profuk + Topení");
+          }
         } else {
+          // Profuk bez topení
           return std::string(radiatory ? "Profuk + radiátory" : "Profuk");
         }
-      } else if (topeni) {
-        return std::string("Topení");
-      } else if (radiatory) {
+      } 
+      else if (topeni) {
+        // POUZE TOPENÍ (bez větrání)
+        if (turbo) {
+          return std::string("Boost Topení ⚡");
+        } else {
+          return std::string("Topení");
+        }
+      } 
+      else if (radiatory) {
         return std::string("Pouze radiátory");
       }
+      
       return std::string("Klid");
 
 number:
@@ -948,7 +977,13 @@ script:
     - switch.turn_on: switch_rele_4
     - switch.turn_off: switch_rele_3
     - logger.log: "♨️ CIRKULACE: Boost"
-# RK2 Manager - Centrální řídící logika ATREA RK2 jednotky
+
+# RK2 Manager - Centrální řídící logika ATREA VZT jednotky
+# Řídí:
+# - DAC výstup (signál pro RK2 manager)
+# - Relé motory (XL9535: větrání relé 8,7,6 + cirkulace relé 5,4,3)
+# - Topení (čerpadlo GPIO21 + ventil GPIO48)
+# - Zamrazovací ochrana (blokuje změny během ochrany)
 - id: rk2_manager
   mode: restart
   then:
@@ -1025,10 +1060,27 @@ script:
           id(dac_current_level) = dac;
         }
           
+        // ========================================================================
+        // OPRAVENÉ LOGOVÁNÍ - Čitelné stringy místo čísel
+        // ========================================================================
+        
+        // Pomocná funkce pro převod čísla režimu na string
+        auto mode_to_string = [](int m) -> const char* {
+          switch(m) {
+            case 0: return "VYPNUTO";
+            case 1: return "MALÝ VÝKON";
+            case 2: return "VELKÝ VÝKON";
+            case 3: return "BOOST";
+            default: return "NEZNÁMÝ";
+          }
+        };
+        
         // Řízení motorů přes relé místo PWM
         // Větrání
         if (id(vet_current_mode) != vet_mode) {
-          ESP_LOGI("MOTOR", "🌀 Větrání: režim %d → %d", id(vet_current_mode), vet_mode);
+          ESP_LOGI("MOTOR", "🌀 Větrání: %s → %s", 
+            mode_to_string(id(vet_current_mode)), 
+            mode_to_string(vet_mode));
           id(vet_current_mode) = vet_mode;
         }
         switch (vet_mode) {
@@ -1041,7 +1093,9 @@ script:
           
         // Cirkulace
         if (id(cirk_current_mode) != cirk_mode) {
-          ESP_LOGI("MOTOR", "♨️  Cirkulace: režim %d → %d", id(cirk_current_mode), cirk_mode);
+          ESP_LOGI("MOTOR", "♨️  Cirkulace: %s → %s", 
+            mode_to_string(id(cirk_current_mode)), 
+            mode_to_string(cirk_mode));
           id(cirk_current_mode) = cirk_mode;
         }
         switch (cirk_mode) {
