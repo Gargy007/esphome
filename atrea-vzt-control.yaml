@@ -287,22 +287,6 @@ sensor:
       return (millis() / 1000) - id(last_ventilation_millis);
 
   - platform: template
-    name: "VZT - Stav Cirkulačního Ventilátoru"
-    id: text_stav_cirkulace
-    icon: "mdi:fan"
-    lambda: |-
-      int mode = id(cirk_current_mode);
-      return mode == 0 ? "Vypnuto" : mode == 1 ? "Malý výkon" : mode == 2 ? "Velký výkon" : mode == 3 ? "Boost" : "Neznámý stav";
-
-  - platform: template
-    name: "VZT - Stav Větracího Ventilátoru"
-    id: text_stav_vetrani
-    icon: "mdi:fan"
-    lambda: |-
-      int mode = id(vet_current_mode);
-      return mode == 0 ? "Vypnuto" : mode == 1 ? "Malý výkon" : mode == 2 ? "Velký výkon" : mode == 3 ? "Boost" : "Neznámý stav";
-
-  - platform: template
     name: "VZT - Stupeň otevření klapky RK2"
     id: sensor_dac_level
     unit_of_measurement: "%"
@@ -859,6 +843,21 @@ text_sensor:
       }
       return std::string("Klid");
 
+  - platform: template
+    name: "VZT - Stav Cirkulačního Ventilátoru"
+    id: text_stav_cirkulace
+    icon: "mdi:fan"
+    lambda: |-
+      int mode = id(cirk_current_mode);
+      return mode == 0 ? "Vypnuto" : mode == 1 ? "Malý výkon" : mode == 2 ? "Velký výkon" : mode == 3 ? "Boost" : "Neznámý stav";
+
+  - platform: template
+    name: "VZT - Stav Větracího Ventilátoru"
+    id: text_stav_vetrani
+    icon: "mdi:fan"
+    lambda: |-
+      int mode = id(vet_current_mode);
+      return mode == 0 ? "Vypnuto" : mode == 1 ? "Malý výkon" : mode == 2 ? "Velký výkon" : mode == 3 ? "Boost" : "Neznámý stav";
 
 number:
   # Nastavení zpoždění a doběhu větrání
