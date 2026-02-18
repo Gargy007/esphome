@@ -370,10 +370,6 @@ binary_sensor:
 #------------------------------------------------------------------------------------
 #                            HW part definitions (Outputs)
 #------------------------------------------------------------------------------------
-# AC DIMMER triaky na GPIO17 a GPIO18:
-# - GPIO17: Regulace cirkulace (0-100%)
-# - GPIO18: Regulace větrání (0-100%)
-# Oba používají zero-crossing pin GPIO34 pro synchronizaci
 #
 # Relé výstupy pro elektromagnetické ventily a čerpadla:
 # - GPIO45: Nabijení tabletu
@@ -383,30 +379,6 @@ binary_sensor:
 # - GPIO21: Čerpadlo topení
 #------------------------------------------------------------------------------------
 output:
-    # Triaky (Fázová regulace) - ZAKOMENTOVÁNO, nahrazeno relé řízením
-    # - platform: ac_dimmer
-    #   id: output_cirkulace
-    #   gate_pin: GPIO17
-    #   zero_cross_pin:
-    #     number: GPIO34
-    #     allow_other_uses: true
-    #     mode:
-    #       input: true
-    #       pullup: true
-    #     inverted: yes
-    #   method: LEADING_PULSE
-    
-    # - platform: ac_dimmer
-    #   id: output_vetrani
-    #   gate_pin: GPIO18
-    #   zero_cross_pin:
-    #     number: GPIO34
-    #     allow_other_uses: true
-    #     mode:
-    #       input: true
-    #       pullup: true
-    #     inverted: yes
-    #   method: LEADING_PULSE
 
   - platform: gpio
     pin: 
@@ -489,20 +461,6 @@ i2c:
   frequency: 100kHz
   scan: true
 
-light:
-  # Interní light entity pro řízení PWM výkonu
-  # Nejsou viditelné v HA GUI (internal: true) - ZAKOMENTOVÁNO, nahrazeno relé řízením
-  
-  # - platform: monochromatic
-  #   name: "VZT - Aktuální výkon Cirkulace"
-  #   output: output_cirkulace
-  #   id: light_cirkulace
-  #   internal: true  # Ovládáno managerem skrze lambda
-  # - platform: monochromatic
-  #   name: "VZT - Aktuální výkon Větrání"
-  #   output: output_vetrani
-  #   id: light_vetrani
-  #   internal: true
 #------------------------------------------------------------------------------------
 #                         Home Assistant Interface & Control
 #------------------------------------------------------------------------------------
@@ -912,76 +870,6 @@ number:
             format: "⚙️ Koupelna Doběh: %.0f s"
             args: ['x']
   
-  # Nastavení otáček - Procenta výkonu pro různé režimy - ZAKOMENTOVÁNO, výkon je pevný
-  
-  # - platform: template
-  #   name: "VZT Výkon Větrání MALÝ"
-  #   id: pwr_vet_low
-  #   min_value: 0
-  #   max_value: 100
-  #   step: 2
-  #   initial_value: 30
-  #   optimistic: true
-  #   unit_of_measurement: "%"
-  #   icon: mdi:fan
-  #   on_value:
-  #     then:
-  #       - logger.log:
-  #           format: "⚙️ Výkon Větrání MALÝ: %.0f%%"
-  #           args: ['x']
-  #       - script.execute: rk2_manager
-        
-  # - platform: template
-  #   name: "VZT Výkon Větrání VELKÝ"
-  #   id: pwr_vet_high
-  #   min_value: 0
-  #   max_value: 100
-  #   step: 2
-  #   initial_value: 80
-  #   optimistic: true
-  #   unit_of_measurement: "%"
-  #   icon: mdi:fan
-  #   on_value:
-  #     then:
-  #       - logger.log:
-  #           format: "⚙️ Výkon Větrání VELKÝ: %.0f%%"
-  #           args: ['x']
-  #       - script.execute: rk2_manager
-        
-  # - platform: template
-  #   name: "VZT Výkon Cirkulace MALÝ"
-  #   id: pwr_cirk_low
-  #   min_value: 0
-  #   max_value: 100
-  #   step: 2
-  #   initial_value: 35
-  #   optimistic: true
-  #   unit_of_measurement: "%"
-  #   icon: mdi:fan
-  #   on_value:
-  #     then:
-  #       - logger.log:
-  #           format: "⚙️ Výkon Cirkulace MALÝ: %.0f%%"
-  #           args: ['x']
-  #       - script.execute: rk2_manager
-        
-  # - platform: template
-  #   name: "VZT Výkon Cirkulace VELKÝ"
-  #   id: pwr_cirk_high
-  #   min_value: 0
-  #   max_value: 100
-  #   step: 2
-  #   initial_value: 90
-  #   optimistic: true
-  #   unit_of_measurement: "%"
-  #   icon: mdi:fan
-  #   on_value:
-  #     then:
-  #       - logger.log:
-  #           format: "⚙️ Výkon Cirkulace VELKÝ: %.0f%%"
-  #           args: ['x']
-  #       - script.execute: rk2_manager
-
   - platform: template
     name: "VZT Profuk - Délka trvání"
     id: profuk_duration
