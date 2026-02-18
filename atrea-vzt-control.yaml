@@ -253,25 +253,18 @@ sensor:
     name: "Rozdíl tlaku na filtru"
     id: pressure_diff_at_filter
     internal: false
-    # Nastavení pro maximální přesnost na ESP32-S3
-    attenuation: 12db  # Umožní číst až do 3.1V (při 3.3V VCC)
+    attenuation: 12db
     update_interval: 1s
     unit_of_measurement: "Pa"
     device_class: pressure
     state_class: measurement
     accuracy_decimals: 1
-
     filters:
-      # 1. Odstranění šumu průměrováním z 15 vzorků (zpomalí odezvu, zvýší stabilitu)
       - sliding_window_moving_average:
           window_size: 15
           send_every: 1
-      
-      # 2. Tvůj kalibrovaný vzorec
       - lambda: |-
           return (x - 1.7287) * 1500.0;
-      
-      # 3. Odstřižení šumu kolem nuly (pokud je hodnota +- 2 Pa, pošle 0)
       - lambda: |-
           if (abs(x) < 2.0) return 0.0;
           else return x;
@@ -295,6 +288,7 @@ sensor:
     update_interval: 1s
     lambda: |-
       return id(dac_current_level) * 100.0;
+
 binary_sensor:
   # ============================================================================
   # VSTUPNÍ SENZORY - Každý má vlastní oddělené scripty
@@ -714,15 +708,42 @@ text_sensor:
   - platform: ethernet_info
     ip_address:
       name: "IP Address"
+      
+  # Stavy ventilátorů - SPRÁVNĚ v text_sensor sekci
+  - platform: template
+    name: "VZT - Stav Cirkulačního Ventilátoru"
+    id: text_stav_cirkulace
+    icon: "mdi:fan"
+    update_interval: 5s
+    lambda: |-
+      int mode = id(cirk_current_mode);
+      if (mode == 0) return std::string("Vypnuto");
+      if (mode == 1) return std::string("Malý výkon");
+      if (mode == 2) return std::string("Velký výkon");
+      if (mode == 3) return std::string("Boost");
+      return std::string("Neznámý stav");
+
+  - platform: template
+    name: "VZT - Stav Větracího Ventilátoru"
+    id: text_stav_vetrani
+    icon: "mdi:fan"
+    update_interval: 5s
+    lambda: |-
+      int mode = id(vet_current_mode);
+      if (mode == 0) return std::string("Vypnuto");
+      if (mode == 1) return std::string("Malý výkon");
+      if (mode == 2) return std::string("Velký výkon");
+      if (mode == 3) return std::string("Boost");
+      return std::string("Neznámý stav");
+      
   - platform: template
     name: "VZT - Poslední vypnutí (Unix)"
     icon: "mdi:clock-end"
     lambda: |-
       char str[20];
       sprintf(str, "%d", id(last_ventilation_unix));
-      return {str};
+      return std::string(str);
 
-  # NOVÝ - Stav zamrazovací ochrany
   - platform: template
     name: "VZT - Zamrazovací ochrana (stav)"
     id: vzt_frost_protection_status
@@ -749,7 +770,6 @@ text_sensor:
         return std::string("Aktivní - čeká se na 10°C, obnoví: " + std::string(request_names[req_type]) + " (T=" + std::to_string((int)temp) + "°C)");
       }
 
-  # NOVÝ - Důvod nárazového větrání
   - platform: template
     name: "VZT - Důvod nárazového větrání"
     id: vzt_boost_reason
@@ -758,7 +778,6 @@ text_sensor:
     lambda: |-
       std::vector<std::string> reasons;
     
-      // Kontrola jednotlivých aktivních vstupů
       if (id(flag_wc_prizemi_active)) {
         reasons.push_back("WC přízemí");
       }
@@ -775,12 +794,10 @@ text_sensor:
         reasons.push_back("HA externí");
       }
     
-      // Pokud není žádný důvod
       if (reasons.empty()) {
         return std::string("Žádný");
       }
     
-      // Spojení všech důvodů čárkou
       std::string result = "";
       for (size_t i = 0; i < reasons.size(); i++) {
         result += reasons[i];
@@ -802,7 +819,6 @@ text_sensor:
       bool radiatory = id(flag_topeni_radiatory_active);
       bool frost_protection = id(flag_frost_protection_active);
 
-      // Vytvoření bitové masky stavu (pro detekci změny)
       uint8_t current_hash = 0;
       current_hash |= (boost ? 1 : 0) << 0;
       current_hash |= (topeni ? 1 : 0) << 1;
@@ -813,7 +829,6 @@ text_sensor:
       current_hash |= (id(flag_kuchyn_active) ? 1 : 0) << 6;
       current_hash |= (id(flag_ha_active) ? 1 : 0) << 7;
 
-      // Logovat pouze při změně stavu
       if (current_hash != id(last_state_hash)) {
         ESP_LOGI("STATE_CHANGE", "boost=%d, topeni=%d, profuk=%d, frost=%d | WC_priz=%d, WC_pat=%d, Koup=%d, Kuch=%d, HA_ext=%d", 
           boost, topeni, profuk, frost_protection,
@@ -842,22 +857,6 @@ text_sensor:
         return std::string("Pouze radiátory");
       }
       return std::string("Klid");
-
-  - platform: template
-    name: "VZT - Stav Cirkulačního Ventilátoru"
-    id: text_stav_cirkulace
-    icon: "mdi:fan"
-    lambda: |-
-      int mode = id(cirk_current_mode);
-      return mode == 0 ? "Vypnuto" : mode == 1 ? "Malý výkon" : mode == 2 ? "Velký výkon" : mode == 3 ? "Boost" : "Neznámý stav";
-
-  - platform: template
-    name: "VZT - Stav Větracího Ventilátoru"
-    id: text_stav_vetrani
-    icon: "mdi:fan"
-    lambda: |-
-      int mode = id(vet_current_mode);
-      return mode == 0 ? "Vypnuto" : mode == 1 ? "Malý výkon" : mode == 2 ? "Velký výkon" : mode == 3 ? "Boost" : "Neznámý stav";
 
 number:
   # Nastavení zpoždění a doběhu větrání
