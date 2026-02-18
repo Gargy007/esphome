@@ -5,13 +5,19 @@
 # ║                                                                                ║
 # ║  KLÍČOVÉ FUNKCE:                                                               ║
 # ║  • Řízení větrání přes DAC výstup (0.0-1.0) → RK2 manager                      ║
-# ║  • Řízení cirkulace a větrání přes PWM triaky (AC_DIMMER)                      ║
+# ║  • Řízení cirkulace a větrání přes relé (XL9535) s pevnými napětími            ║
 # ║  • 4x senzory požadavků na větrání (GPIO) - WC, Koupelna, Kuchyň               ║
 # ║  • Periodické větrání (2-20 minut, nastavitelné, pokud není aktivní boost)     ║
 # ║  • Topení radiátorů v koupelně (bez VZT systému)                               ║
 # ║  • Tepelné senzory pro diagnostiku (Dallas 1-Wire)                             ║
 # ║  • Monitoring tlaku na filtru (ADC)                                            ║
 # ║  • Watchdog bezpečnosti (2 hodiny timeout)                                     ║
+# ║  • ❄️  ZAMRAZOVACÍ OCHRANA - Automatická ochrana výměníku (T < 2°C)            ║
+# ║      • Zastaví větrání při kritické teplotě                                    ║
+# ║      • Spustí topení (cirkulaci) k odmrazení                                   ║
+# ║      • Pauzuje všechny nové požadavky (vstupní tlačítka ignorovaná)            ║
+# ║      • Obnoví původní požadavek když T > 10°C                                  ║
+# ║      • Chrání rekuperační výměník před zmrazením                               ║
 # ║                                                                                ║
 # ║  DAC VÝSTUP (dac_vystup_1) - Řízení RK2 režimů:                                ║
 # ║  • 0.0 = Pouze cirkulace (bez větrání) - TOPENÍ VZT ONLY                       ║
@@ -19,18 +25,27 @@
 # ║  • 0.8 = Velké větrání + cirkulace - BOOST + TOPENÍ VZT                        ║
 # ║  • 1.0 = Velké větrání bez cirkulace - BOOST ONLY                              ║
 # ║                                                                                ║
+# ║  MOTORŮ ŘÍZENÍ (XL9535 relé):                                                  ║
+# ║  • Větrací ventilátor (relé 8,7,6):                                            ║
+# ║    - Vypnuto: všechna relé OFF                                                 ║
+# ║    - Malý výkon: relé 8=OFF, 7=OFF, 6=ON                                       ║
+# ║    - Velký výkon: relé 8=ON, 7=OFF, 6=OFF                                      ║
+# ║    - Boost: relé 8=ON, 7=ON, 6=OFF                                             ║
+# ║  • Cirkulační ventilátor (relé 5,4,3):                                         ║
+# ║    - Stejné jako větrací, ale relé 5/4/3                                       ║
+# ║                                                                                ║
 # ║  VSTUPNÍ SENZORY:                                                              ║
-# ║  • vzt_wc_prizemi (GPIO42) - Požadavek na větrání WC přízemí                   ║
+# ║  • vzt_wc_prizemi (GPIO40) - Požadavek na větrání WC přízemí                   ║
 # ║  • vzt_wc_patro (GPIO41) - Požadavek na větrání WC patro                       ║
-# ║  • vzt_koupelna (GPIO40) - Požadavek na větrání Koupelny                       ║
+# ║  • vzt_koupelna (GPIO42) - Požadavek na větrání Koupelny                       ║
 # ║  • vzt_kuchyn (GPIO39) - Požadavek na větrání Kuchyně                          ║
 # ║  • switch_ha_externi - Externí požadavek z Home Assistant                      ║
 # ║  • switch_topeni_radiatory - Aktivace topení radiátorů (samostatné od VZT)     ║
+# ║  • Teplota - Rekuperace - Výstup z domu (Dallas sensor pro mraz-ochranu)       ║
 # ║                                                                                ║
 # ║  VÝSTUPNÍ PRVKY:                                                               ║
 # ║  • dac_vystup_1 (GPIO 1-Wire DAC via I2C@0x60) - RK2 režim (VZT)               ║
-# ║  • output_vetrani (GPIO18 AC_DIMMER) - PWM větrání (0-100%)                    ║
-# ║  • output_cirkulace (GPIO17 AC_DIMMER) - PWM cirkulace (0-100%)                ║
+# ║  • Relé motory (XL9535 I2C): větrání (relé 8,7,6), cirkulace (relé 5,4,3)      ║
 # ║  • Relé výstupy (GPIO45-48, GPIO21) - Topení, bypass, čerpadlo, atd.           ║
 # ║  • LED indikátory (GPIO03=RED, GPIO15=GREEN)                                   ║
 # ║                                                                                ║
@@ -49,7 +64,16 @@ esphome:
   on_boot:
     priority: 800
     then:
+      # Nastavit všechna relé motorů do vypnutého stavu po bootu
+      - switch.turn_off: switch_rele_8
+      - switch.turn_off: switch_rele_7
+      - switch.turn_off: switch_rele_6
+      - switch.turn_off: switch_rele_5
+      - switch.turn_off: switch_rele_4
+      - switch.turn_off: switch_rele_3
+      # Run RK2 manager to apply initial state (e.g. if topení radiátory were active before reboot)    
       - script.execute: rk2_manager
+
 
 esp32:
   board: esp32-s3-devkitc-1
@@ -68,14 +92,14 @@ globals:
     type: float
     restore_value: no
     initial_value: '0.0'
-  - id: vet_current_pwr
-    type: float
+  - id: vet_current_mode
+    type: int
     restore_value: no
-    initial_value: '0.0'
-  - id: cirk_current_pwr
-    type: float
+    initial_value: '0'  # 0=OFF, 1=LOW, 2=HIGH, 3=BOOST
+  - id: cirk_current_mode
+    type: int
     restore_value: no
-    initial_value: '0.0'
+    initial_value: '0'  # 0=OFF, 1=LOW, 2=HIGH, 3=BOOST
   - id: flag_profuk_active
     type: bool
     restore_value: no
@@ -106,6 +130,21 @@ globals:
     initial_value: 'false'
   # Pro detekci změny stavu (bitová maska)
   - id: last_state_hash
+    type: uint8_t
+    restore_value: no
+    initial_value: '0'
+  # ===== FROST PROTECTION (Zamrazovací ochrana) =====
+  - id: flag_frost_protection_active
+    type: bool
+    restore_value: no
+    initial_value: 'false'
+  # Typ původního požadavku na větrání (0=none, 1=kuchyn, 2=ha, 3=koupelna, 4=wc_prizemi, 5=wc_patro, 6=profuk)
+  - id: frost_saved_request_type
+    type: uint8_t
+    restore_value: no
+    initial_value: '0'
+  # Přídavná info - bylo více simultánních požadavků?
+  - id: frost_saved_request_count
     type: uint8_t
     restore_value: no
     initial_value: '0'
@@ -190,6 +229,7 @@ sensor:
   - platform: dallas_temp
     address: 0xdf0923b09c4c2b28
     name:  Teplota - Rekuperace - Vystup z domu
+    id: temp_reku_out_home
     update_interval: 30s
   - platform: dallas_temp
     address: 0x460000055a39a728
@@ -214,7 +254,7 @@ sensor:
     id: pressure_diff_at_filter
     internal: false
     # Nastavení pro maximální přesnost na ESP32-S3
-    attenuation: 11db  # Umožní číst až do 3.1V (při 3.3V VCC)
+    attenuation: 12db  # Umožní číst až do 3.1V (při 3.3V VCC)
     update_interval: 1s
     unit_of_measurement: "Pa"
     device_class: pressure
@@ -247,24 +287,20 @@ sensor:
       return (millis() / 1000) - id(last_ventilation_millis);
 
   - platform: template
-    name: "VZT - Výkon Cirkulace"
-    id: sensor_pwr_cirkulace
-    unit_of_measurement: "%"
+    name: "VZT - Stav Cirkulačního Ventilátoru"
+    id: text_stav_cirkulace
     icon: "mdi:fan"
-    state_class: measurement
-    update_interval: 1s
     lambda: |-
-      return id(cirk_current_pwr);
+      int mode = id(cirk_current_mode);
+      return mode == 0 ? "Vypnuto" : mode == 1 ? "Malý výkon" : mode == 2 ? "Velký výkon" : mode == 3 ? "Boost" : "Neznámý stav";
 
   - platform: template
-    name: "VZT - Výkon Větrání"
-    id: sensor_pwr_vetrani
-    unit_of_measurement: "%"
+    name: "VZT - Stav Větracího Ventilátoru"
+    id: text_stav_vetrani
     icon: "mdi:fan"
-    state_class: measurement
-    update_interval: 1s
     lambda: |-
-      return id(vet_current_pwr);
+      int mode = id(vet_current_mode);
+      return mode == 0 ? "Vypnuto" : mode == 1 ? "Malý výkon" : mode == 2 ? "Velký výkon" : mode == 3 ? "Boost" : "Neznámý stav";
 
   - platform: template
     name: "VZT - Stupeň otevření klapky RK2"
@@ -294,7 +330,7 @@ binary_sensor:
 
   - platform: gpio
     id: vzt_koupelna
-    pin: {number: GPIO40, mode: {input: true, pullup: true}, inverted: true}
+    pin: {number: GPIO42, mode: {input: true, pullup: true}, inverted: true}
     name: "Požadavek větrání Koupelna"
     on_press: 
       - logger.log: "🛁 KOUPELNA: Senzor aktivován"
@@ -307,7 +343,7 @@ binary_sensor:
 
   - platform: gpio
     id: vzt_wc_prizemi
-    pin: {number: GPIO42, mode: {input: true, pullup: true}, inverted: true}
+    pin: {number: GPIO40, mode: {input: true, pullup: true}, inverted: true}
     name: "Požadavek větrání WC přízemí"
     on_press: 
       - logger.log: "🚽 WC PŘÍZEMÍ: Senzor aktivován"
@@ -369,37 +405,37 @@ binary_sensor:
 # - GPIO21: Čerpadlo topení
 #------------------------------------------------------------------------------------
 output:
-    # Triaky (Fázová regulace)
-  - platform: ac_dimmer
-    id: output_cirkulace
-    gate_pin: GPIO17
-    zero_cross_pin:
-      number: GPIO34
-      allow_other_uses: true
-      mode:
-        input: true
-        pullup: true
-      inverted: yes
-    method: LEADING_PULSE
+    # Triaky (Fázová regulace) - ZAKOMENTOVÁNO, nahrazeno relé řízením
+    # - platform: ac_dimmer
+    #   id: output_cirkulace
+    #   gate_pin: GPIO17
+    #   zero_cross_pin:
+    #     number: GPIO34
+    #     allow_other_uses: true
+    #     mode:
+    #       input: true
+    #       pullup: true
+    #     inverted: yes
+    #   method: LEADING_PULSE
     
-  - platform: ac_dimmer
-    id: output_vetrani
-    gate_pin: GPIO18
-    zero_cross_pin:
-      number: GPIO34
-      allow_other_uses: true
-      mode:
-        input: true
-        pullup: true
-      inverted: yes
-    method: LEADING_PULSE
+    # - platform: ac_dimmer
+    #   id: output_vetrani
+    #   gate_pin: GPIO18
+    #   zero_cross_pin:
+    #     number: GPIO34
+    #     allow_other_uses: true
+    #     mode:
+    #       input: true
+    #       pullup: true
+    #     inverted: yes
+    #   method: LEADING_PULSE
 
   - platform: gpio
     pin: 
       number: GPIO45
       mode:
         output: true
-        pullup: true
+        pullup: false
         pulldown: false
       inverted: false  # Keeps active-low relay OFF on boot
     id: gpio_rele_nabijeni
@@ -408,7 +444,7 @@ output:
       number: GPIO46
       mode:
         output: true
-        pullup: true
+        pullup: false
         pulldown: false
       inverted: false  # Keeps active-low relay OFF on boot
     id: gpio_rele_no
@@ -441,10 +477,20 @@ output:
     id: gpio_rele_cerpadlo_topeni
   
   - platform: gpio
-    pin: GPIO03
+    pin:
+      number: GPIO03
+      mode:
+        output: true
+        pullup: false
+        pulldown: false
     id: gpio_led_red
   - platform: gpio
-    pin: GPIO15
+    pin:
+      number: GPIO15
+      mode:
+        output: true
+        pullup: false
+        pulldown: false
     id: gpio_led_green
 
   - platform: mcp4725
@@ -455,6 +501,10 @@ output:
     id: dac_vystup_2
     address: 0x61 # ADDR pin na 5V (VCC)
 
+xl9535:
+  id: xl9535_relay_board
+  address: 0x20  # Default address for Xl9535 I2C 8 relay board
+
 i2c:
   sda: GPIO1
   scl: GPIO0
@@ -463,18 +513,18 @@ i2c:
 
 light:
   # Interní light entity pro řízení PWM výkonu
-  # Nejsou viditelné v HA GUI (internal: true) - řídí se přímo z rk2_manager
+  # Nejsou viditelné v HA GUI (internal: true) - ZAKOMENTOVÁNO, nahrazeno relé řízením
   
-  - platform: monochromatic
-    name: "VZT - Aktuální výkon Cirkulace"
-    output: output_cirkulace
-    id: light_cirkulace
-    internal: true  # Ovládáno managerem skrze lambda
-  - platform: monochromatic
-    name: "VZT - Aktuální výkon Větrání"
-    output: output_vetrani
-    id: light_vetrani
-    internal: true
+  # - platform: monochromatic
+  #   name: "VZT - Aktuální výkon Cirkulace"
+  #   output: output_cirkulace
+  #   id: light_cirkulace
+  #   internal: true  # Ovládáno managerem skrze lambda
+  # - platform: monochromatic
+  #   name: "VZT - Aktuální výkon Větrání"
+  #   output: output_vetrani
+  #   id: light_vetrani
+  #   internal: true
 #------------------------------------------------------------------------------------
 #                         Home Assistant Interface & Control
 #------------------------------------------------------------------------------------
@@ -597,6 +647,85 @@ switch:
           level: INFO
       - globals.set: {id: flag_topeni_radiatory_active, value: 'false'}
       - script.execute: rk2_manager
+
+  # XL9535 I2C 8 Relay Board Switches
+  - platform: gpio
+    name: "XL9535 Relay 1"
+    pin:
+      xl9535: xl9535_relay_board
+      number: 0
+      mode:
+        output: true
+      inverted: false
+  - platform: gpio
+    name: "XL9535 Relay 2"
+    pin:
+      xl9535: xl9535_relay_board
+      number: 1
+      mode:
+        output: true
+      inverted: false
+  - platform: gpio
+    name: "XL9535 Relay 3"
+    id: switch_rele_3
+    pin:
+      xl9535: xl9535_relay_board
+      number: 2
+      mode:
+        output: true
+      inverted: false
+    internal: true  # Skryto z HA - řízení cirkulačního motoru
+  - platform: gpio
+    name: "XL9535 Relay 4"
+    id: switch_rele_4
+    pin:
+      xl9535: xl9535_relay_board
+      number: 3
+      mode:
+        output: true
+      inverted: false
+    internal: true  # Skryto z HA - řízení cirkulačního motoru
+  - platform: gpio
+    name: "XL9535 Relay 5"
+    id: switch_rele_5
+    pin:
+      xl9535: xl9535_relay_board
+      number: 4
+      mode:
+        output: true
+      inverted: false
+    internal: true  # Skryto z HA - řízení cirkulačního motoru
+  - platform: gpio
+    name: "XL9535 Relay 6"
+    id: switch_rele_6
+    pin:
+      xl9535: xl9535_relay_board
+      number: 5
+      mode:
+        output: true
+      inverted: false
+    internal: true  # Skryto z HA - řízení větracího motoru
+  - platform: gpio
+    name: "XL9535 Relay 7"
+    id: switch_rele_7
+    pin:
+      xl9535: xl9535_relay_board
+      number: 6
+      mode:
+        output: true
+      inverted: false
+    internal: true  # Skryto z HA - řízení větracího motoru
+  - platform: gpio
+    name: "XL9535 Relay 8"
+    id: switch_rele_8
+    pin:
+      xl9535: xl9535_relay_board
+      number: 7
+      mode:
+        output: true
+      inverted: false
+    internal: true  # Skryto z HA - řízení větracího motoru
+
 text_sensor:
   - platform: ethernet_info
     ip_address:
@@ -608,6 +737,33 @@ text_sensor:
       char str[20];
       sprintf(str, "%d", id(last_ventilation_unix));
       return {str};
+
+  # NOVÝ - Stav zamrazovací ochrany
+  - platform: template
+    name: "VZT - Zamrazovací ochrana (stav)"
+    id: vzt_frost_protection_status
+    icon: "mdi:snowflake-alert"
+    update_interval: 1s
+    lambda: |-
+      if (!id(flag_frost_protection_active)) {
+        return std::string("Vypnuta");
+      }
+      
+      float temp = id(temp_reku_out_home).state;
+      if (std::isnan(temp)) {
+        return std::string("Chyba: NaN");
+      }
+      
+      const char* request_names[] = {"žádný", "🍳 kuchyň", "🏠 HA externí", "🛁 koupelna", "🚽 WC přízemí", "🚽 WC patro", "💨 profuk"};
+      uint8_t req_type = id(frost_saved_request_type);
+      
+      if (req_type > 6) req_type = 0;
+      
+      if (req_type == 0) {
+        return std::string("Aktivní - čeká se odbourání (T=" + std::to_string((int)temp) + "°C)");
+      } else {
+        return std::string("Aktivní - čeká se na 10°C, obnoví: " + std::string(request_names[req_type]) + " (T=" + std::to_string((int)temp) + "°C)");
+      }
 
   # NOVÝ - Důvod nárazového větrání
   - platform: template
@@ -660,6 +816,7 @@ text_sensor:
       bool topeni = id(switch_topeni_on).state;
       bool profuk = id(flag_profuk_active);
       bool radiatory = id(flag_topeni_radiatory_active);
+      bool frost_protection = id(flag_frost_protection_active);
 
       // Vytvoření bitové masky stavu (pro detekci změny)
       uint8_t current_hash = 0;
@@ -674,14 +831,16 @@ text_sensor:
 
       // Logovat pouze při změně stavu
       if (current_hash != id(last_state_hash)) {
-        ESP_LOGI("STATE_CHANGE", "boost=%d, topeni=%d, profuk=%d | WC_priz=%d, WC_pat=%d, Koup=%d, Kuch=%d, HA_ext=%d", 
-          boost, topeni, profuk, 
+        ESP_LOGI("STATE_CHANGE", "boost=%d, topeni=%d, profuk=%d, frost=%d | WC_priz=%d, WC_pat=%d, Koup=%d, Kuch=%d, HA_ext=%d", 
+          boost, topeni, profuk, frost_protection,
           id(flag_wc_prizemi_active), id(flag_wc_patro_active), id(flag_koupelna_active), 
           id(flag_kuchyn_active), id(flag_ha_active));
         id(last_state_hash) = current_hash;
       }
 
-      if (boost) {
+      if (frost_protection) {
+        return std::string("❄️ Zamrazovací ochrana");
+      } else if (boost) {
         if (topeni) {
           return std::string("Větrání + Topení");
         } else {
@@ -755,75 +914,75 @@ number:
             format: "⚙️ Koupelna Doběh: %.0f s"
             args: ['x']
   
-  # Nastavení otáček - Procenta výkonu pro různé režimy
+  # Nastavení otáček - Procenta výkonu pro různé režimy - ZAKOMENTOVÁNO, výkon je pevný
   
-  - platform: template
-    name: "VZT Výkon Větrání MALÝ"
-    id: pwr_vet_low
-    min_value: 0
-    max_value: 100
-    step: 2
-    initial_value: 30
-    optimistic: true
-    unit_of_measurement: "%"
-    icon: mdi:fan
-    on_value:
-      then:
-        - logger.log:
-            format: "⚙️ Výkon Větrání MALÝ: %.0f%%"
-            args: ['x']
-        - script.execute: rk2_manager
+  # - platform: template
+  #   name: "VZT Výkon Větrání MALÝ"
+  #   id: pwr_vet_low
+  #   min_value: 0
+  #   max_value: 100
+  #   step: 2
+  #   initial_value: 30
+  #   optimistic: true
+  #   unit_of_measurement: "%"
+  #   icon: mdi:fan
+  #   on_value:
+  #     then:
+  #       - logger.log:
+  #           format: "⚙️ Výkon Větrání MALÝ: %.0f%%"
+  #           args: ['x']
+  #       - script.execute: rk2_manager
         
-  - platform: template
-    name: "VZT Výkon Větrání VELKÝ"
-    id: pwr_vet_high
-    min_value: 0
-    max_value: 100
-    step: 2
-    initial_value: 80
-    optimistic: true
-    unit_of_measurement: "%"
-    icon: mdi:fan
-    on_value:
-      then:
-        - logger.log:
-            format: "⚙️ Výkon Větrání VELKÝ: %.0f%%"
-            args: ['x']
-        - script.execute: rk2_manager
+  # - platform: template
+  #   name: "VZT Výkon Větrání VELKÝ"
+  #   id: pwr_vet_high
+  #   min_value: 0
+  #   max_value: 100
+  #   step: 2
+  #   initial_value: 80
+  #   optimistic: true
+  #   unit_of_measurement: "%"
+  #   icon: mdi:fan
+  #   on_value:
+  #     then:
+  #       - logger.log:
+  #           format: "⚙️ Výkon Větrání VELKÝ: %.0f%%"
+  #           args: ['x']
+  #       - script.execute: rk2_manager
         
-  - platform: template
-    name: "VZT Výkon Cirkulace MALÝ"
-    id: pwr_cirk_low
-    min_value: 0
-    max_value: 100
-    step: 2
-    initial_value: 35
-    optimistic: true
-    unit_of_measurement: "%"
-    icon: mdi:fan
-    on_value:
-      then:
-        - logger.log:
-            format: "⚙️ Výkon Cirkulace MALÝ: %.0f%%"
-            args: ['x']
-        - script.execute: rk2_manager
+  # - platform: template
+  #   name: "VZT Výkon Cirkulace MALÝ"
+  #   id: pwr_cirk_low
+  #   min_value: 0
+  #   max_value: 100
+  #   step: 2
+  #   initial_value: 35
+  #   optimistic: true
+  #   unit_of_measurement: "%"
+  #   icon: mdi:fan
+  #   on_value:
+  #     then:
+  #       - logger.log:
+  #           format: "⚙️ Výkon Cirkulace MALÝ: %.0f%%"
+  #           args: ['x']
+  #       - script.execute: rk2_manager
         
-  - platform: template
-    name: "VZT Výkon Cirkulace VELKÝ"
-    id: pwr_cirk_high
-    min_value: 0
-    max_value: 100
-    step: 2
-    initial_value: 90
-    optimistic: true
-    unit_of_measurement: "%"
-    icon: mdi:fan
-    on_value:
-      then:
-        - logger.log:
-            format: "⚙️ Výkon Cirkulace VELKÝ: %.0f%%"
-            args: ['x']
-        - script.execute: rk2_manager
+  # - platform: template
+  #   name: "VZT Výkon Cirkulace VELKÝ"
+  #   id: pwr_cirk_high
+  #   min_value: 0
+  #   max_value: 100
+  #   step: 2
+  #   initial_value: 90
+  #   optimistic: true
+  #   unit_of_measurement: "%"
+  #   icon: mdi:fan
+  #   on_value:
+  #     then:
+  #       - logger.log:
+  #           format: "⚙️ Výkon Cirkulace VELKÝ: %.0f%%"
+  #           args: ['x']
+  #       - script.execute: rk2_manager
 
   - platform: template
     name: "VZT Profuk - Délka trvání"
@@ -845,11 +1004,75 @@ number:
 #                         Logika regulatoru (Manager) - OPRAVENO
 #------------------------------------------------------------------------------------
 script:
+# ============================================================================
+# Skripty pro řízení motorů přes relé
+# ============================================================================
+- id: script_motor_vetrani_off
+  then:
+    - switch.turn_off: switch_rele_8
+    - switch.turn_off: switch_rele_7
+    - switch.turn_off: switch_rele_6
+    - logger.log: "🌀 VĚTRÁNÍ: Vypnuto"
+
+- id: script_motor_vetrani_low
+  then:
+    - switch.turn_off: switch_rele_8
+    - switch.turn_off: switch_rele_7
+    - switch.turn_on: switch_rele_6
+    - logger.log: "🌀 VĚTRÁNÍ: Malý výkon"
+
+- id: script_motor_vetrani_high
+  then:
+    - switch.turn_on: switch_rele_8
+    - switch.turn_off: switch_rele_7
+    - switch.turn_off: switch_rele_6
+    - logger.log: "🌀 VĚTRÁNÍ: Velký výkon"
+
+- id: script_motor_vetrani_boost
+  then:
+    - switch.turn_on: switch_rele_8
+    - switch.turn_on: switch_rele_7
+    - switch.turn_off: switch_rele_6
+    - logger.log: "🌀 VĚTRÁNÍ: Boost"
+
+- id: script_motor_cirkulace_off
+  then:
+    - switch.turn_off: switch_rele_5
+    - switch.turn_off: switch_rele_4
+    - switch.turn_off: switch_rele_3
+    - logger.log: "♨️ CIRKULACE: Vypnuto"
+
+- id: script_motor_cirkulace_low
+  then:
+    - switch.turn_off: switch_rele_5
+    - switch.turn_off: switch_rele_4
+    - switch.turn_on: switch_rele_3
+    - logger.log: "♨️ CIRKULACE: Malý výkon"
+
+- id: script_motor_cirkulace_high
+  then:
+    - switch.turn_on: switch_rele_5
+    - switch.turn_off: switch_rele_4
+    - switch.turn_off: switch_rele_3
+    - logger.log: "♨️ CIRKULACE: Velký výkon"
+
+- id: script_motor_cirkulace_boost
+  then:
+    - switch.turn_on: switch_rele_5
+    - switch.turn_on: switch_rele_4
+    - switch.turn_off: switch_rele_3
+    - logger.log: "♨️ CIRKULACE: Boost"
 # RK2 Manager - Centrální řídící logika ATREA RK2 jednotky
 - id: rk2_manager
   mode: restart
   then:
     - lambda: |-
+        // ⚠️ KRITICKÁ BEZPEČNOST: Pokud je aktivní zamrazovací ochrana, nic se nemění!
+        if (id(flag_frost_protection_active)) {
+          ESP_LOGW("RK2", "🔒 Zamrazovací ochrana aktivní - rk2_manager je ZABLOKOVÁN!");
+          return;  // STOP - Nic se nemění během ochrany!
+        }
+
         // Příznak boost: zda je aktivní některý požadavek na větrání
         // POZOR: Kontrolujeme interní flagy, ne přímo senzory (kvůli zpožděním a doběhům)
         bool boost_kuchyn = id(flag_kuchyn_active);
@@ -864,40 +1087,42 @@ script:
         bool profuk = id(flag_profuk_active);
         bool radiatory = id(flag_topeni_radiatory_active);
 
-        float dac = 0.0, vet = 0.0, cirk = 0.0;
+        float dac = 0.0;
+        int vet_mode = 0;  // 0=OFF, 1=LOW, 2=HIGH, 3=BOOST
+        int cirk_mode = 0; // 0=OFF, 1=LOW, 2=HIGH, 3=BOOST
         std::string mode = "";
 
         if (boost) {
           // BOOST režim: Požadavek na větrání je aktivní
           if (topeni) { 
             // Boost + Topení: Velké větrání + malá cirkulace
-            dac = 0.8; vet = id(pwr_vet_high).state; cirk = id(pwr_cirk_low).state;
+            dac = 0.8; vet_mode = 2; cirk_mode = 1;  // HIGH + LOW
             mode = "BOOST + TOPENÍ";
           }
           else { 
             // Boost bez topení: Velké větrání bez cirkulace
-            dac = 1.0; vet = id(pwr_vet_high).state; cirk = 0.0;
+            dac = 1.0; vet_mode = 2; cirk_mode = 0;  // HIGH + OFF
             mode = radiatory ? "BOOST + radiátory" : "BOOST";
           }
         } else if (profuk) {
           // PERIODICKÉ VĚTRÁNÍ: Běh naplánovaného větrání (bez boost)
           if (topeni) { 
             // Profuk + Topení: Malé větrání + malá cirkulace
-            dac = 0.5; vet = id(pwr_vet_low).state; cirk = id(pwr_cirk_low).state;
+            dac = 0.5; vet_mode = 1; cirk_mode = 1;  // LOW + LOW
             mode = "PROFUK + TOPENÍ";
           }
           else { 
             // Profuk bez topení: Malé větrání bez cirkulace
-            dac = 1.0; vet = id(pwr_vet_low).state; cirk = 0.0;
+            dac = 1.0; vet_mode = 1; cirk_mode = 0;  // LOW + OFF
             mode = radiatory ? "PROFUK + radiátory" : "PROFUK";
           }
         } else if (topeni) {
           // TOPENÍ BEZ VĚTRÁNÍ: Pouze cirkulace
-          dac = 0.0; vet = 0.0; cirk = turbo ? id(pwr_cirk_high).state : id(pwr_cirk_low).state;
+          dac = 0.0; vet_mode = 0; cirk_mode = turbo ? 2 : 1;  // OFF + HIGH/LOW
           mode = turbo ? "TOPENÍ TURBO" : "TOPENÍ";
         } else if (radiatory) {
           // POUZE RADIÁTORY: Jen čerpadlo topení, bez větrání
-          dac = 0.0; vet = 0.0; cirk = 0.0;
+          dac = 0.0; vet_mode = 0; cirk_mode = 0;  // OFF + OFF
           mode = "Pouze radiátory";
         } else {
           mode = "KLID";
@@ -914,24 +1139,32 @@ script:
           id(dac_current_level) = dac;
         }
           
-        // LOGOVÁNÍ ZMĚNY VÝKONU VĚTRÁNÍ (pokud se změnil)
-        if (id(vet_current_pwr) != vet) {
-          ESP_LOGI("MOTOR", "🌀 Větrání: %.0f%% → %.0f%%", id(vet_current_pwr), vet);
-          id(vet_current_pwr) = vet;
-        } else {
-          id(vet_current_pwr) = vet;
+        // Řízení motorů přes relé místo PWM
+        // Větrání
+        if (id(vet_current_mode) != vet_mode) {
+          ESP_LOGI("MOTOR", "🌀 Větrání: režim %d → %d", id(vet_current_mode), vet_mode);
+          id(vet_current_mode) = vet_mode;
+        }
+        switch (vet_mode) {
+          case 0: id(script_motor_vetrani_off).execute(); break;
+          case 1: id(script_motor_vetrani_low).execute(); break;
+          case 2: id(script_motor_vetrani_high).execute(); break;
+          case 3: id(script_motor_vetrani_boost).execute(); break;
+          default: ESP_LOGW("MOTOR", "Neznámý režim větrání: %d", vet_mode);
         }
           
-        // LOGOVÁNÍ ZMĚNY VÝKONU CIRKULACE (pokud se změnil)
-        if (id(cirk_current_pwr) != cirk) {
-          ESP_LOGI("MOTOR", "♨️  Cirkulace: %.0f%% → %.0f%%", id(cirk_current_pwr), cirk);
-          id(cirk_current_pwr) = cirk;
-        } else {
-          id(cirk_current_pwr) = cirk;
+        // Cirkulace
+        if (id(cirk_current_mode) != cirk_mode) {
+          ESP_LOGI("MOTOR", "♨️  Cirkulace: režim %d → %d", id(cirk_current_mode), cirk_mode);
+          id(cirk_current_mode) = cirk_mode;
         }
-          
-        auto cv = id(light_vetrani).make_call(); cv.set_brightness(vet/100.0f); cv.set_state(vet>0); cv.perform();
-        auto cc = id(light_cirkulace).make_call(); cc.set_brightness(cirk/100.0f); cc.set_state(cirk>0); cc.perform();
+        switch (cirk_mode) {
+          case 0: id(script_motor_cirkulace_off).execute(); break;
+          case 1: id(script_motor_cirkulace_low).execute(); break;
+          case 2: id(script_motor_cirkulace_high).execute(); break;
+          case 3: id(script_motor_cirkulace_boost).execute(); break;
+          default: ESP_LOGW("MOTOR", "Neznámý režim cirkulace: %d", cirk_mode);
+        }
 
         // Řízení externích zařízení topení
         // Čerpadlo běží při topení i radiátorech
@@ -953,13 +1186,21 @@ script:
 - id: script_kuchyn_on
   mode: restart
   then:
-    - logger.log:
-        format: "🍳 KUCHYŇ: Zapnuto"
-        level: INFO
-    - globals.set:
-        id: flag_kuchyn_active
-        value: 'true'
-    - script.execute: rk2_manager
+    - if:
+        condition:
+          lambda: 'return id(flag_frost_protection_active);'
+        then:
+          - logger.log:
+              format: "🍳 KUCHYŇ: Požadavek IGNOROVÁN (Zamrazovací ochrana aktivní!)"
+              level: WARN
+        else:
+          - logger.log:
+              format: "🍳 KUCHYŇ: Zapnuto"
+              level: INFO
+          - globals.set:
+              id: flag_kuchyn_active
+              value: 'true'
+          - script.execute: rk2_manager
 
 - id: script_kuchyn_off
   mode: restart
@@ -978,13 +1219,21 @@ script:
 - id: script_ha_on
   mode: restart
   then:
-    - logger.log:
-        format: "🏠 HA EXTERNÍ: Zapnuto"
-        level: INFO
-    - globals.set:
-        id: flag_ha_active
-        value: 'true'
-    - script.execute: rk2_manager
+    - if:
+        condition:
+          lambda: 'return id(flag_frost_protection_active);'
+        then:
+          - logger.log:
+              format: "🏠 HA EXTERNÍ: Požadavek IGNOROVÁN (Zamrazovací ochrana aktivní!)"
+              level: WARN
+        else:
+          - logger.log:
+              format: "🏠 HA EXTERNÍ: Zapnuto"
+              level: INFO
+          - globals.set:
+              id: flag_ha_active
+              value: 'true'
+          - script.execute: rk2_manager
 
 - id: script_ha_off
   mode: restart
@@ -1003,13 +1252,21 @@ script:
 - id: script_koupelna_on
   mode: restart  # Restart = zruší předchozí běh (včetně doběhu)
   then:
-    - logger.log:
-        format: "🛁 KOUPELNA: Zapnuto"
-        level: INFO
-    - globals.set:
-        id: flag_koupelna_active
-        value: 'true'
-    - script.execute: rk2_manager  # Okamžitě spustit větrání
+    - if:
+        condition:
+          lambda: 'return id(flag_frost_protection_active);'
+        then:
+          - logger.log:
+              format: "🛁 KOUPELNA: Požadavek IGNOROVÁN (Zamrazovací ochrana aktivní!)"
+              level: WARN
+        else:
+          - logger.log:
+              format: "🛁 KOUPELNA: Zapnuto"
+              level: INFO
+          - globals.set:
+              id: flag_koupelna_active
+              value: 'true'
+          - script.execute: rk2_manager  # Okamžitě spustit větrání
 
 - id: script_koupelna_off
   mode: restart
@@ -1038,19 +1295,27 @@ script:
 - id: script_wc_prizemi_on
   mode: restart  # Restart = zruší předchozí zpoždění i doběh
   then:
-    - logger.log:
-        format: "🚽 WC PŘÍZEMÍ: Zpoždění startu"
-        level: INFO
-    # Zpoždění zapnutí
-    - delay: !lambda "return id(wc_delay_start).state * 1000;"
-    # Po zpoždění zapnout větrání
-    - logger.log:
-        format: "🚽 WC PŘÍZEMÍ: Zapnuto"
-        level: INFO
-    - globals.set:
-        id: flag_wc_prizemi_active
-        value: 'true'
-    - script.execute: rk2_manager
+    - if:
+        condition:
+          lambda: 'return id(flag_frost_protection_active);'
+        then:
+          - logger.log:
+              format: "🚽 WC PŘÍZEMÍ: Požadavek IGNOROVÁN (Zamrazovací ochrana aktivní!)"
+              level: WARN
+        else:
+          - logger.log:
+              format: "🚽 WC PŘÍZEMÍ: Zpoždění startu"
+              level: INFO
+          # Zpoždění zapnutí
+          - delay: !lambda "return id(wc_delay_start).state * 1000;"
+          # Po zpoždění zapnout větrání
+          - logger.log:
+              format: "🚽 WC PŘÍZEMÍ: Zapnuto"
+              level: INFO
+          - globals.set:
+              id: flag_wc_prizemi_active
+              value: 'true'
+          - script.execute: rk2_manager
 
 - id: script_wc_prizemi_off
   mode: restart
@@ -1086,19 +1351,27 @@ script:
 - id: script_wc_patro_on
   mode: restart
   then:
-    - logger.log:
-        format: "🚽 WC PATRO: Zpoždění startu"
-        level: INFO
-    # Zpoždění zapnutí
-    - delay: !lambda "return id(wc_delay_start).state * 1000;"
-    # Po zpoždění zapnout větrání
-    - logger.log:
-        format: "🚽 WC PATRO: Zapnuto"
-        level: INFO
-    - globals.set:
-        id: flag_wc_patro_active
-        value: 'true'
-    - script.execute: rk2_manager
+    - if:
+        condition:
+          lambda: 'return id(flag_frost_protection_active);'
+        then:
+          - logger.log:
+              format: "🚽 WC PATRO: Požadavek IGNOROVÁN (Zamrazovací ochrana aktivní!)"
+              level: WARN
+        else:
+          - logger.log:
+              format: "🚽 WC PATRO: Zpoždění startu"
+              level: INFO
+          # Zpoždění zapnutí
+          - delay: !lambda "return id(wc_delay_start).state * 1000;"
+          # Po zpoždění zapnout větrání
+          - logger.log:
+              format: "🚽 WC PATRO: Zapnuto"
+              level: INFO
+          - globals.set:
+              id: flag_wc_patro_active
+              value: 'true'
+          - script.execute: rk2_manager
 
 - id: script_wc_patro_off
   mode: restart
@@ -1171,6 +1444,110 @@ script:
     - script.execute: rk2_manager
 
 # ============================================================================
+# FROST PROTECTION (Zamrazovací ochrana) - Ochrana proti zmrazení výstupu
+# ============================================================================
+- id: script_frost_protection_on
+  mode: restart
+  then:
+    - logger.log:
+        format: "❄️ FROST PROTECTION: AKTIVOVÁNA! T=%.1f°C < 2.0°C - Všechny větrací požadavky PAUZOVÁNY!"
+        args: ['id(temp_reku_out_home).state']
+        level: WARN
+    # Uložit typ původního požadavku
+    - lambda: |-
+        // Určit který flag byl aktivní (přioritizovat v pořadí)
+        uint8_t req_type = 0;
+        if (id(flag_kuchyn_active)) {
+          req_type = 1; // KUCHYN
+          ESP_LOGI("FROST", "  └─ Uložen požadavek: 🍳 Kuchyň");
+        } else if (id(flag_ha_active)) {
+          req_type = 2; // HA
+          ESP_LOGI("FROST", "  └─ Uložen požadavek: 🏠 HA externí");
+        } else if (id(flag_koupelna_active)) {
+          req_type = 3; // KOUPELNA
+          ESP_LOGI("FROST", "  └─ Uložen požadavek: 🛁 Koupelna");
+        } else if (id(flag_wc_prizemi_active)) {
+          req_type = 4; // WC PRIZEMI
+          ESP_LOGI("FROST", "  └─ Uložen požadavek: 🚽 WC přízemí");
+        } else if (id(flag_wc_patro_active)) {
+          req_type = 5; // WC PATRO
+          ESP_LOGI("FROST", "  └─ Uložen požadavek: 🚽 WC patro");
+        } else if (id(flag_profuk_active)) {
+          req_type = 6; // PROFUK
+          ESP_LOGI("FROST", "  └─ Uložen požadavek: 💨 Profuk");
+        } else {
+          ESP_LOGI("FROST", "  └─ Žádný aktivní požadavek");
+        }
+        id(frost_saved_request_type) = req_type;
+    - globals.set: {id: flag_frost_protection_active, value: 'true'}
+    # Zastavit všechny požadavky na větrání
+    - globals.set: {id: flag_kuchyn_active, value: 'false'}
+    - globals.set: {id: flag_ha_active, value: 'false'}
+    - globals.set: {id: flag_koupelna_active, value: 'false'}
+    - globals.set: {id: flag_wc_prizemi_active, value: 'false'}
+    - globals.set: {id: flag_wc_patro_active, value: 'false'}
+    - globals.set: {id: flag_profuk_active, value: 'false'}
+    - logger.log:
+        format: "❄️ Zastavena všechna větrání - Spouštím topení na cirkulaci pro odmrazení..."
+        level: WARN
+    - script.stop: script_safety_watchdog
+    # Zapnout topení - cirkulace k odmrazení
+    - switch.turn_on: switch_topeni_on
+    - script.execute: rk2_manager
+
+- id: script_frost_protection_off
+  mode: restart
+  then:
+    - logger.log:
+        format: "❄️ FROST PROTECTION: Deaktivována (T >10°C)"
+        level: INFO
+    - globals.set: {id: flag_frost_protection_active, value: 'false'}
+    # Vypnout topení
+    - switch.turn_off: switch_topeni_on
+    # Pokud byl původní požadavek, znovu jej aktivovat
+    - lambda: |-
+        uint8_t req_type = id(frost_saved_request_type);
+        bool had_request = (req_type > 0);
+        
+        switch (req_type) {
+          case 1: // KUCHYN
+            ESP_LOGI("FROST", "Obnova: Kuchyň");
+            id(script_kuchyn_on).execute();
+            break;
+          case 2: // HA
+            ESP_LOGI("FROST", "Obnova: HA externí");
+            id(script_ha_on).execute();
+            break;
+          case 3: // KOUPELNA
+            ESP_LOGI("FROST", "Obnova: Koupelna");
+            id(script_koupelna_on).execute();
+            break;
+          case 4: // WC PRIZEMI
+            ESP_LOGI("FROST", "Obnova: WC přízemí");
+            id(script_wc_prizemi_on).execute();
+            break;
+          case 5: // WC PATRO
+            ESP_LOGI("FROST", "Obnova: WC patro");
+            id(script_wc_patro_on).execute();
+            break;
+          case 6: // PROFUK
+            ESP_LOGI("FROST", "Obnova: Profuk");
+            id(script_periodic_ventilation).execute();
+            break;
+          default:
+            ESP_LOGI("FROST", "Žádný požadavek k obnovení");
+            break;
+        }
+        
+        // ⚠️ DŮLEŽITÉ: Znovu spustit watchdog pouze pokud byl nějaký požadavek
+        if (had_request) {
+          ESP_LOGI("FROST", "Restart watchdog pro obnovený požadavek");
+          id(script_safety_watchdog).execute();
+        }
+    - globals.set: {id: frost_saved_request_type, value: '0'}
+    - script.execute: rk2_manager
+
+# ============================================================================
 # Periodické větrání
 # ============================================================================
 - id: script_periodic_ventilation
@@ -1191,6 +1568,56 @@ script:
     - script.execute: rk2_manager
       
 interval:
+  # ============================================================================
+  # FROST PROTECTION MONITOR - Monitorování teploty výstupu domu
+  # ============================================================================
+  # Pokud T_out < 2°C: Aktivovat zamrazovací ochranu (= zastavit větrání, zapnout topení)
+  # Pokud T_out > 10°C: Deaktivovat zamrazovací ochranu
+  # ============================================================================
+  - interval: 30s
+    then:
+      - if:
+          condition:
+            lambda: |-
+              float temp = id(temp_reku_out_home).state;
+              // Kontrola validity teploty
+              if (std::isnan(temp) || std::isinf(temp)) {
+                ESP_LOGW("FROST", "Teplota není dostupná (NaN): %.1f", temp);
+                return false;
+              }
+              
+              bool frost_active = id(flag_frost_protection_active);
+              
+              // Pokud není aktivní a teplota klesla pod 2°C
+              if (!frost_active && temp < 2.0) {
+                ESP_LOGW("FROST", "🚨 KRITICKÁ TEPLOTA: %.1f°C < 2.0°C - Aktivace zamrazovací ochrany!", temp);
+                return true;
+              }
+              // Pokud JE aktivní a je pod 10°C, počkej a nespouštěj znovu
+              // Pokud je pod 1.5°C během ochrany, znovu aktivuj ochranu (paranoia)
+              if (frost_active && temp < 1.5) {
+                ESP_LOGW("FROST", "⚠️ KRITICKÁ OSCILACE: %.1f°C < 1.5°C během ochrany - Reset ochrany!", temp);
+                return true;
+              }
+              return false;
+          then:
+            - script.execute: script_frost_protection_on
+      
+      - if:
+          condition:
+            lambda: |-
+              float temp = id(temp_reku_out_home).state;
+              bool frost_active = id(flag_frost_protection_active);
+              
+              // Pokud je aktivní a teplota se vrátila nad 10°C
+              if (frost_active && temp > 10.0) {
+                ESP_LOGI("FROST", "✅ Teplota se vrátila k normálu: %.1f°C > 10.0°C - Deaktivace ochrany", temp);
+                return true;
+              }
+              return false;
+          then:
+            - script.execute: script_frost_protection_off
+
   # Periodická kontrola - spouští větrání každou hodinu, pokud neběželo dlouhodobě
   # (více než 1 hodina bez větrání)
   - interval: 1min
