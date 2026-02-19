@@ -55,6 +55,50 @@
 # ║                                                                                ║
 # ╚════════════════════════════════════════════════════════════════════════════════╝
 
+# ┌────────────────────────────────────────────────────────────────────────────────┐
+# │                    TABULKA REŽIMŮ A STAVŮ AKTUÁTORŮ                            │
+# └────────────────────────────────────────────────────────────────────────────────┘
+#
+# | Režim                      | DAC  | Větrání Motor | Cirkulace Motor | Čerpadlo | Ventil VZT | Bypass     |
+# |----------------------------|------|---------------|-----------------|----------|------------|------------|
+# | **KLID**                   | 0.0  | VYPNUTO       | VYPNUTO         | OFF      | OFF        | dle switch |
+# | **BOOST**                  | 1.0  | VELKÝ VÝKON   | VYPNUTO         | OFF      | OFF        | dle switch |
+# | **BOOST + radiátory**      | 1.0  | VELKÝ VÝKON   | VYPNUTO         | ON       | OFF        | dle switch |
+# | **BOOST + TOPENÍ**         | 0.8  | VELKÝ VÝKON   | VELKÝ VÝKON     | ON       | ON         | dle switch |
+# | **PROFUK**                 | 1.0  | MALÝ VÝKON    | VYPNUTO         | OFF      | OFF        | dle switch |
+# | **PROFUK + radiátory**     | 1.0  | MALÝ VÝKON    | VYPNUTO         | ON       | OFF        | dle switch |
+# | **PROFUK + TOPENÍ**        | 0.5  | MALÝ VÝKON    | MALÝ VÝKON      | ON       | ON         | dle switch |
+# | **PROFUK + TOPENÍ TURBO**  | 0.5  | MALÝ VÝKON    | BOOST VÝKON     | ON       | ON         | dle switch |
+# | **TOPENÍ**                 | 0.0  | VYPNUTO       | MALÝ VÝKON      | ON       | ON         | dle switch |
+# | **TOPENÍ TURBO**           | 0.0  | VYPNUTO       | BOOST VÝKON     | ON       | ON         | dle switch |
+# | **Pouze radiátory**        | 0.0  | VYPNUTO       | VYPNUTO         | ON       | OFF        | dle switch |
+# | ** FROST PROTECTION**      | 0.0  | VYPNUTO       | MALÝ VÝKON      | ON       | ON         | OFF        |
+#
+# **LEGENDA:**
+# - **DAC**: Výstupní napětí na DAC (0.0 - 1.0) → řídí RK2 manager
+# - **Větrání Motor**: Stav větracího ventilátoru (řízeno relé 8,7,6)
+# - **Cirkulace Motor**: Stav cirkulačního ventilátoru (řízeno relé 5,4,3)
+# - **Relé 8,7,6**: XL9535 relé pro větrací motor (8=HIGH bit, 7=BOOST bit, 6=LOW bit)
+# - **Relé 5,4,3**: XL9535 relé pro cirkulační motor (5=HIGH bit, 4=BOOST bit, 3=LOW bit)
+# - **Čerpadlo**: GPIO21 - Čerpadlo topení (ON = aktivní topení)
+# - **Ventil VZT**: GPIO48 - Elektromagnetický ventil topení VZT (ON = topení přes VZT)
+# - **Bypass**: GPIO47 - Klapka bypass (řízeno manuálně přes switch_letni_rezim)
+#
+# **VÝKONOVÉ ÚROVNĚ CIRKULACE:**
+# - **MALÝ VÝKON**: Relé 5=OFF, 4=OFF, 3=ON  (základní topení)
+# - **VELKÝ VÝKON**: Relé 5=ON, 4=OFF, 3=OFF  (intenzivní topení s větráním)
+# - **BOOST VÝKON**: Relé 5=ON, 4=ON, 3=OFF  (maximální topení bez větrání)
+#
+# **POZNÁMKY:**
+# 1. Režim se určuje podle priorit: FROST > BOOST > PROFUK > TOPENÍ > KLID
+# 2. BOOST má přednost před PROFUK (pokud je aktivní boost, profuk se nespustí)
+# 3. Radiátory = čerpadlo BEZ ventilu VZT (topení jen radiátorů, ne VZT)
+# 4. FROST PROTECTION = nucené topení cirkulací při T < 2°C, obnoví původní režim při T > 10°C
+# 5. Watchdog: Automatické vypnutí všech požadavků po 2 hodinách běhu
+# 6. ⚡ TURBO režim = BOOST výkon cirkulace (relé 5=ON + 4=ON) pro maximální topení
+# 7. BOOST + TOPENÍ = VELKÝ výkon cirkulace (relé 5=ON) pro topení s větráním
+
+
 esphome:
   name: atrea-vzt-control
   friendly_name: ATREA VZT CONTROL
@@ -1016,8 +1060,8 @@ script:
         if (boost) {
           // BOOST režim: Požadavek na větrání je aktivní
           if (topeni) { 
-            // Boost + Topení: Velké větrání + malá cirkulace
-            dac = 0.8; vet_mode = 2; cirk_mode = 1;  // HIGH + LOW
+            // Boost + Topení: Velké větrání + VELKÁ cirkulace ⚡ ZMĚNA
+            dac = 0.8; vet_mode = 2; cirk_mode = 2;  // HIGH + HIGH (dříve HIGH + LOW)
             mode = "BOOST + TOPENÍ";
           }
           else { 
@@ -1028,9 +1072,11 @@ script:
         } else if (profuk) {
           // PERIODICKÉ VĚTRÁNÍ: Běh naplánovaného větrání (bez boost)
           if (topeni) { 
-            // Profuk + Topení: Malé větrání + malá cirkulace
-            dac = 0.5; vet_mode = 1; cirk_mode = 1;  // LOW + LOW
-            mode = "PROFUK + TOPENÍ";
+            // Profuk + Topení: Malé větrání + cirkulace (respektovat turbo!)
+            dac = 0.5; 
+            vet_mode = 1;  // LOW (profuk je vždy malý výkon)
+            cirk_mode = turbo ? 3 : 1;  // ⚡ TURBO → BOOST výkon cirkulace (dříve HIGH)
+            mode = turbo ? "PROFUK + TOPENÍ TURBO" : "PROFUK + TOPENÍ";
           }
           else { 
             // Profuk bez topení: Malé větrání bez cirkulace
@@ -1039,7 +1085,7 @@ script:
           }
         } else if (topeni) {
           // TOPENÍ BEZ VĚTRÁNÍ: Pouze cirkulace
-          dac = 0.0; vet_mode = 0; cirk_mode = turbo ? 2 : 1;  // OFF + HIGH/LOW
+          dac = 0.0; vet_mode = 0; cirk_mode = turbo ? 3 : 1;  // ⚡ OFF + BOOST/LOW (dříve HIGH/LOW)
           mode = turbo ? "TOPENÍ TURBO" : "TOPENÍ";
         } else if (radiatory) {
           // POUZE RADIÁTORY: Jen čerpadlo topení, bez větrání
@@ -1119,6 +1165,7 @@ script:
         } else {
           id(switch_rele_el_ventil_topeni_vzt).turn_off();
         }
+
 
 # ============================================================================
 # KUCHYŇ - Přímé zapnutí/vypnutí bez logiky
