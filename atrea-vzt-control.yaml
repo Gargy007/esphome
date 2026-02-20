@@ -1295,6 +1295,7 @@ script:
           id: flag_kuchyn_active
           value: 'false'
       - script.execute: script_global_turn_off_check
+      - script.execute: script_zone_valve_control  # ✅ Aktualizace klapek
 
   # ============================================================================
   # HA EXTERNÍ - Přímé zapnutí/vypnutí
@@ -1328,6 +1329,7 @@ script:
           id: flag_ha_active
           value: 'false'
       - script.execute: script_global_turn_off_check
+      - script.execute: script_zone_valve_control  # ✅ Aktualizace klapek
 
   # ============================================================================
   # KOUPELNA - Okamžité zapnutí + doběh (reset při opětovném zapnutí)
@@ -1367,6 +1369,7 @@ script:
           id: flag_koupelna_active
           value: 'false'
       - script.execute: script_global_turn_off_check
+      - script.execute: script_zone_valve_control  # ✅ Aktualizace klapek
 
   # ============================================================================
   # WC PŘÍZEMÍ - Zpoždění zapnutí + doběh
@@ -1421,6 +1424,7 @@ script:
                 id: flag_wc_prizemi_active
                 value: 'false'
             - script.execute: script_global_turn_off_check
+            - script.execute: script_zone_valve_control  # ✅ Aktualizace klapek
           else:
             # Pokud větrání neběží (vypnuto během zpoždění), jen zrušit script_wc_prizemi_on
             - logger.log:
@@ -1477,6 +1481,7 @@ script:
                 id: flag_wc_patro_active
                 value: 'false'
             - script.execute: script_global_turn_off_check
+            - script.execute: script_zone_valve_control  # ✅ Aktualizace klapek
           else:
             # Pokud větrání neběží (vypnuto během zpoždění), jen zrušit script
             - logger.log:
