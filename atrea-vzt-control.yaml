@@ -446,14 +446,14 @@ binary_sensor:
     id: bs_klapka_kuchyn
     icon: mdi:valve
     lambda: |-
-      return id(switch_klapka_kuchyn).state;  # ON = uzavřena, OFF = otevřena
+      return id(switch_klapka_kuchyn).state;  // ON = uzavřena, OFF = otevřena
     
   - platform: template
     name: "VZT - Klapka Zbytek domu (stav)"
     id: bs_klapka_zbytek_domu
     icon: mdi:valve
     lambda: |-
-      return id(switch_klapka_zbytek_domu).state;  # ON = uzavřena, OFF = otevřena
+      return id(switch_klapka_zbytek_domu).state;  // ON = uzavřena, OFF = otevřena
 
       
 #------------------------------------------------------------------------------------
