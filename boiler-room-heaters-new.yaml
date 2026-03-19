@@ -646,18 +646,20 @@ display:
         }
       }
       
-      // Status bar na spodku
-      it.line(0, 54, 128, 54);
+      // Status bar na spodku - OPRAVENO
+      it.line(0, 52, 128, 52);
       
       // Indikátor stránky a status
       if (id(status_havarijni_rezim).state) {
-        it.filled_rectangle(0, 55, 128, 9);
-        it.printf(64, 56, id(font_small), COLOR_OFF, TextAlign::TOP_CENTER, 
+        // Bílý obdélník od y=53 do y=63 (celkem 11 pixelů)
+        it.filled_rectangle(0, 53, 128, 11);
+        // Text na y=53 (hned pod čárou)
+        it.printf(64, 53, id(font_small), COLOR_OFF, TextAlign::TOP_CENTER, 
                   "!HAVARIE! %d/4", id(display_page) + 1);
       } else if (id(status_chyba_cidla).state) {
-        it.printf(64, 56, id(font_small), TextAlign::TOP_CENTER, 
+        it.printf(64, 53, id(font_small), TextAlign::TOP_CENTER, 
                   "ERR:CIDLO %d/4", id(display_page) + 1);
       } else {
-        it.printf(64, 56, id(font_small), TextAlign::TOP_CENTER, 
+        it.printf(64, 53, id(font_small), TextAlign::TOP_CENTER, 
                   "< %d / 3 >", id(display_page) + 1);
       }
