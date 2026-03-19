@@ -469,9 +469,9 @@ display:
     update_interval: 2s
     id: oled_display
     lambda: |-
-      // Hlavička s názvem
+      // Hlavička s názvem - bílé pozadí, černý text
       it.filled_rectangle(0, 0, 128, 14);
-      it.printf(64, 1, id(font_medium), TextAlign::TOP_CENTER, "KOTELNA");
+      it.printf(64, 1, id(font_medium), COLOR_OFF, TextAlign::TOP_CENTER, "KOTELNA");
       
       // Kotel na tuhá paliva - výstup
       it.printf(2, 16, id(font_small), "Vystup:");
@@ -501,9 +501,11 @@ display:
       it.line(0, 52, 128, 52);
       
       if (id(status_havarijni_rezim).state) {
+        // Havárie - bílé pozadí, černý text
         it.filled_rectangle(0, 54, 128, 10);
-        it.printf(64, 55, id(font_small), TextAlign::TOP_CENTER, "!HAVARIE!");
+        it.printf(64, 55, id(font_small), COLOR_OFF, TextAlign::TOP_CENTER, "!HAVARIE!");
       } else if (id(status_chyba_cidla).state) {
+        // Chyba čidla - normální text
         it.printf(64, 54, id(font_small), TextAlign::TOP_CENTER, "ERR:CIDLO");
       } else {
         // Ikona čerpadla
