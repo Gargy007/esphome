@@ -1190,3 +1190,51 @@ display:
           it.printf(2, 46, id(font_small), "VAROVANI!");
         }
       }
+      // STRÁNKA 3: ERROR/HAVÁRIE (zobrazí se jen při problému)
+      else if (id(display_page) == 3) {
+        if (id(status_havarijni_rezim).state) {
+          // HAVÁRIE - bílé pozadí, černý text
+          it.printf(64, 0, id(font_medium), COLOR_OFF, TextAlign::TOP_CENTER, "HAVARIE!");
+          
+          // Teplota výstupu
+          it.printf(2, 16, id(font_small), "Teplota:");
+          if (!isnan(id(teplota_kotel_vystup).state)) {
+            it.printf(126, 16, id(font_small), TextAlign::TOP_RIGHT, "%.1f°C", 
+                      id(teplota_kotel_vystup).state);
+          } else {
+            it.printf(126, 16, id(font_small), TextAlign::TOP_RIGHT, "---");
+          }
+          
+          // Havarijní limit
+          it.printf(2, 26, id(font_small), "Limit:");
+          it.printf(126, 26, id(font_small), TextAlign::TOP_RIGHT, "%.0f°C", 
+                    id(kotel_havarijni_limit).state);
+          
+          // Stav čerpadla
+          it.printf(2, 36, id(font_small), "Cerpadlo:");
+          it.printf(126, 36, id(font_small), TextAlign::TOP_RIGHT, 
+                    id(switch_obehove_cerpadlo).state ? "ZAP" : "VYP");
+          
+          // Akce
+          it.printf(2, 46, id(font_small), "Akce: Chlazeni!");
+          
+        } else if (id(status_chyba_cidla).state) {
+          // CHYBA ČIDLA
+          it.printf(64, 0, id(font_medium), COLOR_OFF, TextAlign::TOP_CENTER, "CHYBA");
+          
+          it.printf(2, 16, id(font_small), "Typ: Cidlo");
+          
+          // Kontrola čidla výstupu
+          it.printf(2, 26, id(font_small), "Vystup:");
+          it.printf(126, 26, id(font_small), TextAlign::TOP_RIGHT, 
+                    isnan(id(teplota_kotel_vystup).state) ? "CHYBA" : "OK");
+          
+          // Kontrola čidla vrátu
+          it.printf(2, 36, id(font_small), "Vrat:");
+          it.printf(126, 36, id(font_small), TextAlign::TOP_RIGHT, 
+                    isnan(id(teplota_kotel_vrat).state) ? "CHYBA" : "OK");
+          
+          // Stav čerpadla (bezpečnostní režim)
+          it.printf(2, 46, id(font_small), "Cerpadlo: ZAP");
+        }
+      }
