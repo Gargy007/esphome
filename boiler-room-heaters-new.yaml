@@ -71,6 +71,14 @@ globals:
     type: bool
     restore_value: no
     initial_value: 'false'
+  - id: display_page
+    type: int
+    restore_value: no
+    initial_value: '0'
+  - id: last_valve_close_time
+    type: unsigned long
+    restore_value: yes
+    initial_value: '0'
 
 sensor:
   - platform: dallas_temp
@@ -109,7 +117,7 @@ sensor:
   - platform: max6675
     name: "Teplota - Komín (Termočlánek)"
     id: teplota_komin
-    cs_pin: GPIO18 # Pin D10/SPI_CS
+    cs_pin: GPIO18
     update_interval: 10s
 
   # Průtok vody (podle schématu na GPIO16 - D6)
@@ -121,7 +129,12 @@ sensor:
     internal_filter: 100us
     timeout: 5min
     filters:
-      - lambda: return (x / 450.0); # Uprav podle typu senzoru
+      - lambda: return (x / 450.0);
+    total:
+      name: "Celkový průtok vody"
+      id: celkovy_prutok
+      unit_of_measurement: "L"
+      accuracy_decimals: 1
   
   # Vypočítané rozdíly teplot
   - platform: template
@@ -165,7 +178,6 @@ number:
         - lambda: |-
             float vypnuti = id(regulator_rozdil_vypnuti).state;
             float zapnuti = x;
-            // Kontrola: vypnutí musí být minimálně o 2°C nižší než zapnutí
             if (vypnuti >= (zapnuti - 2.0)) {
               float nova_hodnota = zapnuti - 2.0;
               if (nova_hodnota < 0) nova_hodnota = 0;
@@ -189,7 +201,6 @@ number:
         - lambda: |-
             float zapnuti = id(regulator_rozdil_zapnuti).state;
             float vypnuti = x;
-            // Kontrola: vypnutí musí být minimálně o 2°C nižší než zapnutí
             if (vypnuti >= (zapnuti - 2.0)) {
               float nova_hodnota = zapnuti - 2.0;
               if (nova_hodnota < 0) nova_hodnota = 0;
@@ -223,7 +234,6 @@ output:
     pin: GPIO21
     id: gpio_led_red
 
-    
 switch:
   - platform: output
     name: LED Red
@@ -235,6 +245,10 @@ switch:
     output: gpio_rele_ventil_voda
     name: "Hlavní ventil vody"
     id: switch_hlavni_ventil
+    on_turn_off:
+      then:
+        - lambda: |-
+            id(last_valve_close_time) = millis();
 
   - platform: output
     name: Oběhové čerpadlo kotle
@@ -274,11 +288,18 @@ text_sensor:
     update_interval: never
 
 interval:
+  # Střídání stránek displeje každých 4 sekund
+  - interval: 4s
+    then:
+      - lambda: |-
+          // Při havárii nebo chybě čidla zobrazit 4 stránky, jinak 3
+          int max_pages = (id(status_havarijni_rezim).state || id(status_chyba_cidla).state) ? 4 : 3;
+          id(display_page) = (id(display_page) + 1) % max_pages;
+
   # LED status indikace - každou sekundu
   - interval: 1s
     then:
       - lambda: |-
-          // Červená LED - chyba čidla nebo havarijní režim
           if (id(status_chyba_cidla).state || id(status_havarijni_rezim).state) {
             id(switch_led_red).turn_on();
           } else {
@@ -302,7 +323,6 @@ interval:
           float temp_kotel_vrat = id(teplota_kotel_vrat).state;
           float rozdil = 0;
           
-          // Kontrola platnosti čidel
           if (isnan(temp_kotel_vystup) || isnan(temp_kotel_vrat)) {
             sensor_error = true;
             pump_should_run = true;
@@ -317,7 +337,6 @@ interval:
             last_sensor_error = false;
             rozdil = temp_kotel_vystup - temp_kotel_vrat;
             
-            // 1. HAVARIJNÍ REŽIM - vysoká teplota
             float havarijni_limit = id(havarijni_limit_teplota).state;
             if (temp_kotel_vystup > havarijni_limit) {
               pump_should_run = true;
@@ -340,13 +359,11 @@ interval:
                 last_emergency_state = false;
               }
               
-              // 2. STANDARDNÍ REGULACE - pokud je povolena
               if (id(regulator_enable).state) {
                 float rozdil_zapnuti = id(regulator_rozdil_zapnuti).state;
                 float rozdil_vypnuti = id(regulator_rozdil_vypnuti).state;
                 bool current_pump_state = id(switch_obehove_cerpadlo).state;
                 
-                // Hystereze - zapnout při vyšším rozdílu, vypnout při nižším
                 if (!current_pump_state && rozdil >= rozdil_zapnuti) {
                   pump_should_run = true;
                   
@@ -384,12 +401,10 @@ interval:
             }
           }
           
-          // Aktualizace stavů
           id(status_havarijni_rezim).publish_state(emergency_mode);
           id(status_chyba_cidla).publish_state(sensor_error);
           id(stav_regulatoru).publish_state(status_text);
           
-          // Řízení čerpadla
           if (pump_should_run != last_pump_state) {
             if (pump_should_run) {
               id(switch_obehove_cerpadlo).turn_on();
@@ -400,7 +415,6 @@ interval:
             last_pump_state = pump_should_run;
           }
           
-          // Pokud čerpadlo běží, aktualizovat čas posledního běhu
           if (id(switch_obehove_cerpadlo).state) {
             id(last_pump_run_time) = millis();
           }
@@ -415,16 +429,13 @@ interval:
           unsigned long current_time = millis();
           unsigned long last_run = id(last_pump_run_time);
           
-          // Ošetření přetečení millis() (cca po 49 dnech)
           unsigned long time_since_last_run;
           if (current_time >= last_run) {
             time_since_last_run = current_time - last_run;
           } else {
-            // Přetečení - resetovat počítadlo
             time_since_last_run = current_time;
           }
           
-          // Pokud čerpadlo neběželo více než týden
           if (time_since_last_run > WEEK_IN_MS && !id(pump_forced_run)) {
             ESP_LOGW("maintenance", "Čerpadlo neběželo %.1f dní - spouštím 5minutový testovací běh proti zatuhnutí", 
                      time_since_last_run / (24.0 * 60.0 * 60.0 * 1000.0));
@@ -433,7 +444,6 @@ interval:
             id(switch_obehove_cerpadlo).turn_on();
             id(stav_regulatoru).publish_state("Testovací běh - ochrana proti zatuhnutí");
             
-            // Naplánovat vypnutí po 5 minutách
             id(forced_run_timer).execute();
           }
 
@@ -448,7 +458,6 @@ script:
             id(pump_forced_run) = false;
             id(last_pump_run_time) = millis();
           }
-# Add this after the i2c section
 
 # --- DISPLAY ---
 font:
@@ -466,57 +475,189 @@ display:
   - platform: ssd1306_i2c
     model: "SH1106 128x64"
     address: 0x3C
-    update_interval: 2s
+    update_interval: 1s
     id: oled_display
     lambda: |-
-      // Hlavička s názvem - bílé pozadí, černý text
-      it.filled_rectangle(0, 0, 128, 14);
-      it.printf(64, 1, id(font_medium), COLOR_OFF, TextAlign::TOP_CENTER, "KOTELNA");
+      // Pomocná funkce pro formátování času
+      auto format_time_ago = [](unsigned long ms_ago) -> std::string {
+        if (ms_ago == 0) return "Nikdy";
+        unsigned long seconds = ms_ago / 1000;
+        if (seconds < 60) return str_sprintf("%lus", seconds);
+        unsigned long minutes = seconds / 60;
+        if (minutes < 60) return str_sprintf("%lumin", minutes);
+        unsigned long hours = minutes / 60;
+        if (hours < 24) return str_sprintf("%luh", hours);
+        unsigned long days = hours / 24;
+        return str_sprintf("%lud", days);
+      };
       
-      // Kotel na tuhá paliva - výstup
-      it.printf(2, 16, id(font_small), "Vystup:");
-      if (!isnan(id(teplota_kotel_vystup).state)) {
-        it.printf(126, 16, id(font_medium), TextAlign::TOP_RIGHT, "%.1f°", id(teplota_kotel_vystup).state);
-      } else {
-        it.printf(126, 16, id(font_medium), TextAlign::TOP_RIGHT, "---");
+      // Hlavička - stejná pro všechny stránky
+      it.filled_rectangle(0, 0, 128, 13);
+      
+      // STRÁNKA 0: PLYNOVÝ KOTEL
+      if (id(display_page) == 0) {
+        it.printf(64, 0, id(font_medium), COLOR_OFF, TextAlign::TOP_CENTER, "PLYN");
+        
+        // Zda topí
+        it.printf(2, 16, id(font_small), "Status:");
+        it.printf(126, 16, id(font_small), TextAlign::TOP_RIGHT, 
+                  id(switch_plynovy_kotel).state ? "TOPI" : "NETOPI");
+        
+        // Výstup
+        it.printf(2, 26, id(font_small), "Vystup:");
+        if (!isnan(id(teplota_plynovy_vystup).state)) {
+          it.printf(126, 26, id(font_small), TextAlign::TOP_RIGHT, "%.1f°C", 
+                    id(teplota_plynovy_vystup).state);
+        } else {
+          it.printf(126, 26, id(font_small), TextAlign::TOP_RIGHT, "---");
+        }
+        
+        // Vrát
+        it.printf(2, 36, id(font_small), "Vrat:");
+        if (!isnan(id(teplota_plynovy_vrat).state)) {
+          it.printf(126, 36, id(font_small), TextAlign::TOP_RIGHT, "%.1f°C", 
+                    id(teplota_plynovy_vrat).state);
+        } else {
+          it.printf(126, 36, id(font_small), TextAlign::TOP_RIGHT, "---");
+        }
+        
+        // Delta
+        it.printf(2, 46, id(font_small), "Delta:");
+        if (!isnan(id(rozdil_plynovy).state)) {
+          it.printf(126, 46, id(font_small), TextAlign::TOP_RIGHT, "%.1f°C", 
+                    id(rozdil_plynovy).state);
+        } else {
+          it.printf(126, 46, id(font_small), TextAlign::TOP_RIGHT, "---");
+        }
       }
       
-      // Kotel - vrát
-      it.printf(2, 28, id(font_small), "Vrat:");
-      if (!isnan(id(teplota_kotel_vrat).state)) {
-        it.printf(126, 28, id(font_medium), TextAlign::TOP_RIGHT, "%.1f°", id(teplota_kotel_vrat).state);
-      } else {
-        it.printf(126, 28, id(font_medium), TextAlign::TOP_RIGHT, "---");
+      // STRÁNKA 1: KOTEL NA TUHÁ PALIVA
+      else if (id(display_page) == 1) {
+        it.printf(64, 0, id(font_medium), COLOR_OFF, TextAlign::TOP_CENTER, "KOTEL");
+        
+        // Zda topí (čerpadlo běží = topí)
+        it.printf(2, 16, id(font_small), "Status:");
+        it.printf(126, 16, id(font_small), TextAlign::TOP_RIGHT, 
+                  id(switch_obehove_cerpadlo).state ? "TOPI" : "NETOPI");
+        
+        // Pokud netopí, kdy naposledy běželo čerpadlo
+        if (!id(switch_obehove_cerpadlo).state) {
+          it.printf(2, 26, id(font_small), "Posl.beh:");
+          unsigned long time_ago = millis() - id(last_pump_run_time);
+          std::string time_str = format_time_ago(time_ago);
+          it.printf(126, 26, id(font_small), TextAlign::TOP_RIGHT, "%s", time_str.c_str());
+        } else {
+          // Výstup
+          it.printf(2, 26, id(font_small), "Vystup:");
+          if (!isnan(id(teplota_kotel_vystup).state)) {
+            it.printf(126, 26, id(font_small), TextAlign::TOP_RIGHT, "%.1f°C", 
+                      id(teplota_kotel_vystup).state);
+          } else {
+            it.printf(126, 26, id(font_small), TextAlign::TOP_RIGHT, "---");
+          }
+        }
+        
+        // Vrát
+        it.printf(2, 36, id(font_small), "Vrat:");
+        if (!isnan(id(teplota_kotel_vrat).state)) {
+          it.printf(126, 36, id(font_small), TextAlign::TOP_RIGHT, "%.1f°C", 
+                    id(teplota_kotel_vrat).state);
+        } else {
+          it.printf(126, 36, id(font_small), TextAlign::TOP_RIGHT, "---");
+        }
+        
+        // Delta
+        it.printf(2, 46, id(font_small), "Delta:");
+        if (!isnan(id(rozdil_kotel).state)) {
+          it.printf(126, 46, id(font_small), TextAlign::TOP_RIGHT, "%.1f°C", 
+                    id(rozdil_kotel).state);
+        } else {
+          it.printf(126, 46, id(font_small), TextAlign::TOP_RIGHT, "---");
+        }
       }
       
-      // Rozdíl
-      it.printf(2, 40, id(font_small), "Delta:");
-      if (!isnan(id(rozdil_kotel).state)) {
-        it.printf(126, 40, id(font_medium), TextAlign::TOP_RIGHT, "%.1f°", id(rozdil_kotel).state);
-      } else {
-        it.printf(126, 40, id(font_medium), TextAlign::TOP_RIGHT, "---");
+      // STRÁNKA 2: VODA
+      else if (id(display_page) == 2) {
+        it.printf(64, 0, id(font_medium), COLOR_OFF, TextAlign::TOP_CENTER, "VODA");
+        
+        // Aktuální průtok
+        it.printf(2, 16, id(font_small), "Prutok:");
+        if (!isnan(id(prutok_vody).state)) {
+          it.printf(126, 16, id(font_small), TextAlign::TOP_RIGHT, "%.1f L/min", 
+                    id(prutok_vody).state);
+        } else {
+          it.printf(126, 16, id(font_small), TextAlign::TOP_RIGHT, "---");
+        }
+        
+        // Celkový průtok
+        it.printf(2, 26, id(font_small), "Celkem:");
+        if (!isnan(id(celkovy_prutok).state)) {
+          it.printf(126, 26, id(font_small), TextAlign::TOP_RIGHT, "%.0f L", 
+                    id(celkovy_prutok).state);
+        } else {
+          it.printf(126, 26, id(font_small), TextAlign::TOP_RIGHT, "---");
+        }
+        
+        // Ventil status
+        it.printf(2, 36, id(font_small), "Ventil:");
+        it.printf(126, 36, id(font_small), TextAlign::TOP_RIGHT, 
+                  id(switch_hlavni_ventil).state ? "OTEVRENY" : "ZAVRENY");
+        
+        // Kdy naposledy zavřen
+        it.printf(2, 46, id(font_small), "Zavren:");
+        unsigned long time_ago = millis() - id(last_valve_close_time);
+        std::string time_str = format_time_ago(time_ago);
+        it.printf(126, 46, id(font_small), TextAlign::TOP_RIGHT, "%s", time_str.c_str());
+      }
+      
+      // STRÁNKA 3: ERROR/HAVÁRIE (zobrazí se jen při problému)
+      else if (id(display_page) == 3) {
+        if (id(status_havarijni_rezim).state) {
+          it.printf(64, 0, id(font_medium), COLOR_OFF, TextAlign::TOP_CENTER, "HAVARIE!");
+          
+          it.printf(2, 16, id(font_small), "Teplota:");
+          it.printf(126, 16, id(font_small), TextAlign::TOP_RIGHT, "%.1f°C", 
+                    id(teplota_kotel_vystup).state);
+          
+          it.printf(2, 26, id(font_small), "Limit:");
+          it.printf(126, 26, id(font_small), TextAlign::TOP_RIGHT, "%.0f°C", 
+                    id(havarijni_limit_teplota).state);
+          
+          it.printf(2, 36, id(font_small), "Cerpadlo:");
+          it.printf(126, 36, id(font_small), TextAlign::TOP_RIGHT, 
+                    id(switch_obehove_cerpadlo).state ? "ZAP" : "VYP");
+          
+          it.printf(2, 46, id(font_small), "Akce: Chlazeni!");
+          
+        } else if (id(status_chyba_cidla).state) {
+          it.printf(64, 0, id(font_medium), COLOR_OFF, TextAlign::TOP_CENTER, "CHYBA");
+          
+          it.printf(2, 16, id(font_small), "Typ: Cidlo");
+          
+          it.printf(2, 26, id(font_small), "Vystup:");
+          it.printf(126, 26, id(font_small), TextAlign::TOP_RIGHT, 
+                    isnan(id(teplota_kotel_vystup).state) ? "CHYBA" : "OK");
+          
+          it.printf(2, 36, id(font_small), "Vrat:");
+          it.printf(126, 36, id(font_small), TextAlign::TOP_RIGHT, 
+                    isnan(id(teplota_kotel_vrat).state) ? "CHYBA" : "OK");
+          
+          it.printf(2, 46, id(font_small), "Cerpadlo: ZAP");
+        }
       }
       
       // Status bar na spodku
-      it.line(0, 52, 128, 52);
+      it.line(0, 54, 128, 54);
       
+      // Indikátor stránky a status
       if (id(status_havarijni_rezim).state) {
-        // Havárie - bílé pozadí, černý text
-        it.filled_rectangle(0, 54, 128, 10);
-        it.printf(64, 55, id(font_small), COLOR_OFF, TextAlign::TOP_CENTER, "!HAVARIE!");
+        it.filled_rectangle(0, 55, 128, 9);
+        it.printf(64, 56, id(font_small), COLOR_OFF, TextAlign::TOP_CENTER, 
+                  "!HAVARIE! %d/4", id(display_page) + 1);
       } else if (id(status_chyba_cidla).state) {
-        // Chyba čidla - normální text
-        it.printf(64, 54, id(font_small), TextAlign::TOP_CENTER, "ERR:CIDLO");
+        it.printf(64, 56, id(font_small), TextAlign::TOP_CENTER, 
+                  "ERR:CIDLO %d/4", id(display_page) + 1);
       } else {
-        // Ikona čerpadla
-        if (id(switch_obehove_cerpadlo).state) {
-          it.printf(2, 54, id(font_small), "PUMP:ON");
-        } else {
-          it.printf(2, 54, id(font_small), "PUMP:--");
-        }
-        
-        // Průtok
-        if (!isnan(id(prutok_vody).state) && id(prutok_vody).state > 0.1) {
-          it.printf(126, 54, id(font_small), TextAlign::TOP_RIGHT, "%.1fL", id(prutok_vody).state);
-        }
+        it.printf(64, 56, id(font_small), TextAlign::TOP_CENTER, 
+                  "< %d / 3 >", id(display_page) + 1);
       }
