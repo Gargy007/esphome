@@ -461,9 +461,6 @@ font:
   - file: "gfonts://Roboto"
     id: font_large
     size: 16
-  - file: "gfonts://Roboto"
-    id: font_icon
-    size: 20
 
 display:
   - platform: ssd1306_i2c
@@ -474,7 +471,7 @@ display:
     lambda: |-
       // Hlavička s názvem
       it.filled_rectangle(0, 0, 128, 14);
-      it.printf(64, 1, id(font_medium), TextAlign::TOP_CENTER, TextAlign::TOP_CENTER, "\x01 KOTELNA \x01");
+      it.printf(64, 1, id(font_medium), TextAlign::TOP_CENTER, "KOTELNA");
       
       // Kotel na tuhá paliva - výstup
       it.printf(2, 16, id(font_small), "Vystup:");
@@ -505,7 +502,7 @@ display:
       
       if (id(status_havarijni_rezim).state) {
         it.filled_rectangle(0, 54, 128, 10);
-        it.printf(64, 55, id(font_small), TextAlign::TOP_CENTER, TextAlign::TOP_CENTER, "!HAVARIE!");
+        it.printf(64, 55, id(font_small), TextAlign::TOP_CENTER, "!HAVARIE!");
       } else if (id(status_chyba_cidla).state) {
         it.printf(64, 54, id(font_small), TextAlign::TOP_CENTER, "ERR:CIDLO");
       } else {
