@@ -448,3 +448,76 @@ script:
             id(pump_forced_run) = false;
             id(last_pump_run_time) = millis();
           }
+# Add this after the i2c section
+
+# --- DISPLAY ---
+font:
+  - file: "gfonts://Roboto"
+    id: font_small
+    size: 10
+  - file: "gfonts://Roboto"
+    id: font_medium
+    size: 12
+  - file: "gfonts://Roboto"
+    id: font_large
+    size: 16
+  - file: "gfonts://Roboto"
+    id: font_icon
+    size: 20
+
+display:
+  - platform: ssd1306_i2c
+    model: "SH1106 128x64"
+    address: 0x3C
+    update_interval: 2s
+    id: oled_display
+    lambda: |-
+      // Hlavička s názvem
+      it.filled_rectangle(0, 0, 128, 14);
+      it.printf(64, 1, id(font_medium), TextAlign::TOP_CENTER, TextAlign::TOP_CENTER, "\x01 KOTELNA \x01");
+      
+      // Kotel na tuhá paliva - výstup
+      it.printf(2, 16, id(font_small), "Vystup:");
+      if (!isnan(id(teplota_kotel_vystup).state)) {
+        it.printf(126, 16, id(font_medium), TextAlign::TOP_RIGHT, "%.1f°", id(teplota_kotel_vystup).state);
+      } else {
+        it.printf(126, 16, id(font_medium), TextAlign::TOP_RIGHT, "---");
+      }
+      
+      // Kotel - vrát
+      it.printf(2, 28, id(font_small), "Vrat:");
+      if (!isnan(id(teplota_kotel_vrat).state)) {
+        it.printf(126, 28, id(font_medium), TextAlign::TOP_RIGHT, "%.1f°", id(teplota_kotel_vrat).state);
+      } else {
+        it.printf(126, 28, id(font_medium), TextAlign::TOP_RIGHT, "---");
+      }
+      
+      // Rozdíl
+      it.printf(2, 40, id(font_small), "Delta:");
+      if (!isnan(id(rozdil_kotel).state)) {
+        it.printf(126, 40, id(font_medium), TextAlign::TOP_RIGHT, "%.1f°", id(rozdil_kotel).state);
+      } else {
+        it.printf(126, 40, id(font_medium), TextAlign::TOP_RIGHT, "---");
+      }
+      
+      // Status bar na spodku
+      it.line(0, 52, 128, 52);
+      
+      if (id(status_havarijni_rezim).state) {
+        it.filled_rectangle(0, 54, 128, 10);
+        it.printf(64, 55, id(font_small), TextAlign::TOP_CENTER, TextAlign::TOP_CENTER, "!HAVARIE!");
+      } else if (id(status_chyba_cidla).state) {
+        it.printf(64, 54, id(font_small), TextAlign::TOP_CENTER, "ERR:CIDLO");
+      } else {
+        // Ikona čerpadla
+        if (id(switch_obehove_cerpadlo).state) {
+          it.printf(2, 54, id(font_small), "PUMP:ON");
+        } else {
+          it.printf(2, 54, id(font_small), "PUMP:--");
+        }
+        
+        // Průtok
+        if (!isnan(id(prutok_vody).state) && id(prutok_vody).state > 0.1) {
+          it.printf(126, 54, id(font_small), TextAlign::TOP_RIGHT, "%.1fL", id(prutok_vody).state);
+        }
+      }

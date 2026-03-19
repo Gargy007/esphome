@@ -274,10 +274,16 @@ interval:
           static bool last_emergency_state = false;
           static bool last_sensor_error = false;
           
+          // PŘIDAT: Pokud běží vynucený testovací běh, přeskočit regulaci
+          if (id(pump_forced_run)) {
+            ESP_LOGD("regulator", "Probíhá testovací běh - regulace pozastavena");
+            return;
+          }
+          
           bool pump_should_run = false;
           bool emergency_mode = false;
           bool sensor_error = false;
-          std::string status_text = "Neaktivní";
+          std::string status_text = "Neaktivní"
           
           float temp_kotel_vystup = id(teplota_kotel_vystup).state;
           float temp_kotel_vrat = id(teplota_kotel_vrat).state;
@@ -419,7 +425,8 @@ interval:
           }
 
 script:
-  - id: forced_run_timer
+  - id: 
+    mode: single
     then:
       - delay: 5min
       - lambda: |-
