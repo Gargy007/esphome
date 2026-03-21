@@ -685,6 +685,7 @@ switch:
     name: "Kotel - Manuální ZAP"
     id: kotel_manual_on
     icon: "mdi:pump"
+    optimistic: true
     turn_on_action:
       - lambda: |-
           ESP_LOGI("kotel", "Manuální ZAP čerpadla");
@@ -780,7 +781,6 @@ interval:
           } else {
             id(switch_led_red).turn_off();
           }
-  
   # Hlavní regulační logika kotel - každých 10 sekund
   - interval: 10s
     then:
@@ -797,6 +797,8 @@ interval:
           bool cidlo_vystup_ok = !isnan(temp_vystup);
           bool cidlo_vrat_ok = !isnan(temp_vrat);
           bool cidlo_komin_ok = !isnan(temp_komin);
+      
+          // 1. KONTROLA CHYB ČIDEL
           if (!cidlo_vystup_ok || !cidlo_vrat_ok) {
             pump_should_run = true;
             havarie = true;
@@ -809,6 +811,8 @@ interval:
             error_msg = "Chyba čidla KOMÍN";
             ESP_LOGW("kotel", "Čidlo komína nefunguje - regulace jen podle rozdílu teplot");
           }
+      
+          // 2. KONTROLA PŘEHŘÁTÍ
           if (cidlo_vystup_ok && !havarie) {
             float limit = id(kotel_havarijni_limit).state;
             if (temp_vystup > limit) {
@@ -823,10 +827,14 @@ interval:
               }
             }
           }
+      
+          // 3. MANUÁLNÍ REŽIM (má přednost před automatickou regulací, ale ne před havárií)
           if (id(kotel_pump_manual_override) && !havarie) {
             pump_should_run = true;
             status_text = "Manuální režim - ZAP";
           }
+      
+          // 4. AUTOMATICKÁ REGULACE (jen pokud není manuální režim ani havárie)
           if (!havarie && !id(kotel_pump_manual_override)) {
             bool current_pump_state = id(switch_obehove_cerpadlo).state;
             float rozdil = temp_vystup - temp_vrat;
@@ -834,6 +842,8 @@ interval:
             bool rozdil_nizky = rozdil <= id(kotel_rozdil_vypnuti).state;
             bool komin_horky = cidlo_komin_ok && (temp_komin >= id(kotel_komin_zapnuti).state);
             bool komin_studeny = cidlo_komin_ok && (temp_komin <= id(kotel_komin_vypnuti).state);
+        
+            // Podmínky pro ZAPNUTÍ
             if (!current_pump_state && (rozdil_vysok || komin_horky)) {
               pump_should_run = true;
               char buffer[150];
@@ -846,7 +856,9 @@ interval:
               }
               status_text = buffer;
               ESP_LOGI("kotel", "%s", buffer);
-            } else if (current_pump_state && rozdil_nizky && (komin_studeny || !cidlo_komin_ok)) {
+            } 
+            // Podmínky pro VYPNUTÍ
+            else if (current_pump_state && rozdil_nizky && (komin_studeny || !cidlo_komin_ok)) {
               pump_should_run = false;
               char buffer[150];
               if (cidlo_komin_ok) {
@@ -856,7 +868,9 @@ interval:
               }
               status_text = buffer;
               ESP_LOGI("kotel", "%s", buffer);
-            } else {
+            } 
+            // HYSTEREZE - zůstat v aktuálním stavu
+            else {
               pump_should_run = current_pump_state;
               char buffer[150];
               if (current_pump_state) {
@@ -867,29 +881,33 @@ interval:
               status_text = buffer;
             }
           }
+      
+          // 5. PUBLIKOVÁNÍ STAVŮ
           id(kotel_status_havarie).publish_state(havarie);
           id(kotel_stav_regulace).publish_state(status_text);
           id(status_havarijni_rezim).publish_state(havarie);
           id(status_chyba_cidla).publish_state(!cidlo_vystup_ok || !cidlo_vrat_ok);
           id(stav_regulatoru).publish_state(status_text);
+      
+          // 6. APLIKOVÁNÍ ROZHODNUTÍ
           if (pump_should_run != last_pump_state) {
             if (pump_should_run) {
               id(switch_obehove_cerpadlo).turn_on();
               id(kotel_last_pump_run_time) = millis();
               ESP_LOGI("kotel", "Čerpadlo ZAPNUTO");
             } else {
-              if (!id(kotel_pump_manual_override)) {
-                id(switch_obehove_cerpadlo).turn_off();
-                ESP_LOGI("kotel", "Čerpadlo VYPNUTO");
-              }
+              id(switch_obehove_cerpadlo).turn_off();
+              ESP_LOGI("kotel", "Čerpadlo VYPNUTO");
             }
             last_pump_state = pump_should_run;
           }
+      
+          // 7. AKTUALIZACE ČASU POSLEDNÍHO BĚHU
           if (id(switch_obehove_cerpadlo).state) {
             id(kotel_last_pump_run_time) = millis();
           }
+      
           last_havarie_state = havarie;
-
   # Kontrola týdenního běhu čerpadla
   - interval: 1h
     then:
