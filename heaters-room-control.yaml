@@ -673,6 +673,7 @@ switch:
     name: Oběhové čerpadlo kotle
     output: gpio_rele_obehove_cerpadlo
     id: switch_obehove_cerpadlo
+    internal: true
   
   - platform: output
     output: gpio_rele_plyn
