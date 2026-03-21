@@ -461,7 +461,6 @@ sensor:
 # ============================================================================
 # NASTAVENÍ (ovladatelné z Home Assistant)
 # ============================================================================
-
 number:
   # Regulace podle rozdílu teplot
   - platform: template
@@ -487,7 +486,7 @@ number:
               id(kotel_rozdil_vypnuti).publish_state(nova_hodnota);
               ESP_LOGW("kotel", "Auto korekce: Rozdíl VYP nastaven na %.1f°C", nova_hodnota);
             }
-  
+
   - platform: template
     name: "Kotel - Rozdíl VYP"
     id: kotel_rozdil_vypnuti
@@ -511,7 +510,7 @@ number:
               id(kotel_rozdil_vypnuti).publish_state(nova_hodnota);
               ESP_LOGW("kotel", "Neplatná hodnota! Nastaveno na %.1f°C", nova_hodnota);
             }
-  
+
   # Regulace podle teploty komína
   - platform: template
     name: "Kotel - Komín ZAP"
@@ -525,7 +524,7 @@ number:
     unit_of_measurement: "°C"
     mode: box
     icon: "mdi:fire"
-  
+
   - platform: template
     name: "Kotel - Komín VYP"
     id: kotel_komin_vypnuti
@@ -538,7 +537,7 @@ number:
     unit_of_measurement: "°C"
     mode: box
     icon: "mdi:fire-off"
-  
+
   # Havarijní limit
   - platform: template
     name: "Kotel - Havarijní limit"
@@ -594,6 +593,7 @@ number:
     unit_of_measurement: "s"
     mode: box
     icon: "mdi:bell-alert-outline"
+    disabled_by_default: true  # <-- SKRYTO
 
   # Voda - den týdenního testu
   - platform: template
@@ -607,6 +607,7 @@ number:
     restore_value: true
     mode: box
     icon: "mdi:calendar-week"
+    disabled_by_default: true  # <-- SKRYTO
 
   # Voda - hodina týdenního testu
   - platform: template
@@ -621,6 +622,7 @@ number:
     unit_of_measurement: "h"
     mode: box
     icon: "mdi:clock-outline"
+    disabled_by_default: true  # <-- SKRYTO
 
   # Voda - délka pause
   - platform: template
@@ -635,6 +637,7 @@ number:
     unit_of_measurement: "h"
     mode: box
     icon: "mdi:timer-pause-outline"
+    disabled_by_default: true  # <-- SKRYTO
 output:
   - platform: gpio
     pin: GPIO0
