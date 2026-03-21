@@ -120,8 +120,8 @@
 # ============================================================================
 
 esphome:
-  name: boiler-room-v2
-  friendly_name: Boiler room V2
+  name: "heaters-room-control"
+  friendly_name: Kotelna regulator
 
 esp32:
   board: esp32-c6-devkitc-1
