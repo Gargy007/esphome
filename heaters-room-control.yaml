@@ -166,6 +166,8 @@ captive_portal:
 i2c:
   sda: GPIO22
   scl: GPIO23
+  frequency: 100000  # 100kHz - stabilnejsi nez 400kHz, mene timeoutu
+  scan: false  # Nezdrzi boot scan
 
 spi:
   clk_pin: GPIO19
@@ -436,8 +438,8 @@ sensor:
     id: prutok_vody
     internal: true
     unit_of_measurement: "L/min"
-    # Agresivnejsi filtr kvuli ruseni na vedeni prutokomeru (zabrani zahlceni CPU falesnymi pulzy)
-    internal_filter: 20ms
+    # 1ms filtr: staci na potlaceni sumu/indukcnich spiku na vedeni, ale propusti realne pulzy prutokomeru
+    internal_filter: 1ms
     timeout: 5s
     filters:
       - lambda: return x / id(kalibrace_koeficient);
@@ -1406,7 +1408,7 @@ display:
   - platform: ssd1306_i2c
     model: "SH1106 128x64"
     address: 0x3C
-    update_interval: 1s
+    update_interval: 2s  # Zpomaleno z 1s - I2C timeout blokovalo hlavni smycku
     id: oled_display
     lambda: |-
       // Pomocná funkce pro formátování času
