@@ -135,11 +135,13 @@ logger:
   logs:
     sensor: WARN
     dallas.sensor: WARN
+    # Poznamka: sensor: WARN = nelze videt normalni hodnoty v logu, jen chyby
 
 # Enable Home Assistant API
 api:
   encryption:
     key: "9L/bk2VmBAQsr1AOstQ5VefpNbnjGAEziDRPrTKyEBw="
+  reboot_timeout: 0s  # Nerebootovat kdyz HA neni dostupne (napr. HA restart)
 
 ota:
   - platform: esphome
@@ -148,6 +150,8 @@ ota:
 wifi:
   ssid: !secret wifi_ssid
   password: !secret wifi_password
+  fast_connect: true
+  power_save_mode: none
   manual_ip:
     static_ip: 192.168.1.113
     gateway: 192.168.1.1
@@ -170,6 +174,28 @@ spi:
 one_wire:
   - platform: gpio
     pin: GPIO17 # Pin označený jako D5/DS18B20
+
+time:
+  - platform: homeassistant
+    id: homeassistant_time
+    on_time:
+      - hours: 2
+        minutes: 0
+        seconds: 0
+        days_of_week: [1]
+        then:
+          - lambda: |-
+              if (id(voda_test_probiha)) {
+                ESP_LOGW("voda", "Týdenní test již probíhá, přeskočeno");
+                return;
+              }
+              if (id(voda_havarie_aktivni)) {
+                ESP_LOGW("voda", "Týdenní test zrušen, aktivní havárie");
+                return;
+              }
+              ESP_LOGI("voda", "Spouštím týdenní test ventilu (pondělí 2:00)");
+              id(voda_test_script).execute();
+
 
 # 0x3c00000559fe8628 (DS18B20) OK - Plynovy kotel vystup
 # 0x0f00000559c87528 (DS18B20) OK - Plynovy kotel vrat
@@ -304,6 +330,31 @@ globals:
     restore_value: yes
     initial_value: 'false'
 
+  - id: voda_prutok_above_start
+    type: unsigned long
+    restore_value: yes
+    initial_value: '0'
+
+  - id: voda_test_phase
+    type: int
+    restore_value: no
+    initial_value: '0'  # 0=idle,1=closed_wait,2=check_zero_flow,3=done
+
+  - id: voda_test_phase_start
+    type: unsigned long
+    restore_value: no
+    initial_value: '0'
+
+  - id: voda_test_failed
+    type: bool
+    restore_value: no
+    initial_value: 'false'
+
+  - id: voda_test_last_trigger_key
+    type: int
+    restore_value: yes
+    initial_value: '0'
+
   - id: display_page
     type: int
     restore_value: no
@@ -312,6 +363,28 @@ globals:
     type: unsigned long
     restore_value: yes
     initial_value: '0'
+
+  # Kalibrace průtokoměru
+  - id: kalibrace_aktivni
+    type: bool
+    restore_value: no
+    initial_value: 'false'
+
+  - id: kalibrace_start_cas
+    type: unsigned long
+    restore_value: no
+    initial_value: '0'
+
+  - id: kalibrace_start_prutok
+    type: float
+    restore_value: no
+    initial_value: '0.0'
+
+  - id: kalibrace_koeficient
+    type: float
+    restore_value: yes
+    initial_value: '7.5'
+
 sensor:
   - platform: dallas_temp
     address: 0x3c00000559fe8628
@@ -352,29 +425,57 @@ sensor:
     cs_pin: GPIO18
     update_interval: 10s
 
-  # Průtokoměr - UPRAVIT EXISTUJÍCÍ
+  # Průtokoměr - KALIBROVATELNÝ
   - platform: pulse_meter
-    pin: GPIO16
-    name: "Aktuální průtok vody"
+    pin:
+      number: GPIO16
+      mode:
+        input: true
+        pullup: true
+    name: "Aktuální průtok vody (interní)"
     id: prutok_vody
+    internal: true
     unit_of_measurement: "L/min"
-    internal_filter: 100us
+    # Agresivnejsi filtr kvuli ruseni na vedeni prutokomeru (zabrani zahlceni CPU falesnymi pulzy)
+    internal_filter: 20ms
     timeout: 5s
     filters:
-      - lambda: return x / 7.5;
+      - lambda: return x / id(kalibrace_koeficient);
     total:
-      name: "Celkový průtok vody"
+      name: "Celkový průtok vody (interní)"
       id: celkovy_prutok
+      internal: true
       unit_of_measurement: "L"
-      accuracy_decimals: 1
+      accuracy_decimals: 3
       filters:
-        - multiply: 0.1333
+        - lambda: return x / id(kalibrace_koeficient);  # total impulsy -> litry
     on_value:
       then:
         - lambda: |-
             if (x > 0.01) {
               id(voda_posledni_prutok) = millis();
             }
+
+  # Voda - hodnoty pro HA (omezene tempo publikace kvuli vykonu)
+  - platform: template
+    name: "Aktuální průtok vody"
+    id: prutok_vody_ha
+    unit_of_measurement: "L/min"
+    accuracy_decimals: 2
+    update_interval: 5s
+    icon: "mdi:water"
+    lambda: |-
+      return id(prutok_vody).state;
+
+  - platform: template
+    name: "Celkový průtok vody"
+    id: celkovy_prutok_ha
+    unit_of_measurement: "L"
+    accuracy_decimals: 2
+    update_interval: 10s
+    icon: "mdi:counter"
+    lambda: |-
+      return id(celkovy_prutok).state;
   
   # Vypočítané rozdíly teplot
   - platform: template
@@ -457,6 +558,46 @@ sensor:
       
       return zbyvajici > 0 ? zbyvajici : 0.0;
 
+  # Kalibrace průtokoměru
+  - platform: template
+    name: "Kalibrace - Čas měření"
+    id: kalibrace_cas
+    unit_of_measurement: "s"
+    accuracy_decimals: 1
+    update_interval: 2s
+    icon: "mdi:timer"
+    disabled_by_default: true
+    lambda: |-
+      if (!id(kalibrace_aktivni) || id(kalibrace_start_cas) == 0) {
+        return 0.0;
+      }
+      return (millis() - id(kalibrace_start_cas)) / 1000.0;
+
+  - platform: template
+    name: "Kalibrace - Naměřený průtok"
+    id: kalibrace_namereny_prutok
+    unit_of_measurement: "L"
+    accuracy_decimals: 3
+    update_interval: 2s
+    icon: "mdi:counter"
+    disabled_by_default: true
+    lambda: |-
+      if (!id(kalibrace_aktivni)) {
+        return 0.0;
+      }
+      return id(celkovy_prutok).state - id(kalibrace_start_prutok);
+
+  - platform: template
+    name: "Kalibrace - Aktuální koeficient"
+    id: kalibrace_aktualni_koef
+    unit_of_measurement: ""
+    accuracy_decimals: 2
+    update_interval: 30s
+    icon: "mdi:cog"
+    disabled_by_default: true
+    lambda: |-
+      return id(kalibrace_koeficient);
+
 
 # ============================================================================
 # NASTAVENÍ (ovladatelné z Home Assistant)
@@ -505,10 +646,8 @@ number:
             float zapnuti = id(kotel_rozdil_zapnuti).state;
             float vypnuti = x;
             if (vypnuti >= (zapnuti - 2.0)) {
-              float nova_hodnota = zapnuti - 2.0;
-              if (nova_hodnota < 0) nova_hodnota = 0;
-              id(kotel_rozdil_vypnuti).publish_state(nova_hodnota);
-              ESP_LOGW("kotel", "Neplatná hodnota! Nastaveno na %.1f°C", nova_hodnota);
+              // POZOR: nevolat publish_state na sebe - zpusobi nekonecnou rekurzi!
+              ESP_LOGW("kotel", "Neplatna hodnota VYP %.1f! Must be < ZAP %.1f - 2", vypnuti, zapnuti);
             }
 
   # Regulace podle teploty komína
@@ -638,6 +777,26 @@ number:
     mode: box
     icon: "mdi:timer-pause-outline"
     disabled_by_default: true  # <-- SKRYTO
+
+  # Kalibrace průtokoměru
+  - platform: template
+    name: "Kalibrace - Koeficient průtoku"
+    id: kalibrace_koeficient_number
+    min_value: 1.0
+    max_value: 50.0
+    step: 0.1
+    initial_value: 7.5
+    optimistic: true
+    restore_value: true
+    unit_of_measurement: "imp/L"
+    mode: box
+    icon: "mdi:cog"
+    disabled_by_default: true
+    on_value:
+      then:
+        - lambda: |-
+            id(kalibrace_koeficient) = x;
+            ESP_LOGI("kalibrace", "Nový kalibrační koeficient: %.2f imp/L", x);
 output:
   - platform: gpio
     pin: GPIO0
@@ -731,6 +890,27 @@ binary_sensor:
   - platform: template
     name: "Status - Chyba čidla"
     id: status_chyba_cidla
+
+  - platform: template
+    name: "Voda - Havarie"
+    id: voda_havarie_status
+    device_class: safety
+    lambda: |-
+      return id(voda_havarie_aktivni);
+
+  - platform: template
+    name: "Voda - Varování"
+    id: voda_varovani_status
+    device_class: problem
+    lambda: |-
+      return id(voda_varovani_aktivni);
+
+  - platform: template
+    name: "Voda - OK"
+    id: voda_ok_status
+    device_class: power
+    lambda: |-
+      return (!id(voda_havarie_aktivni) && !id(voda_varovani_aktivni));
 text_sensor:
   - platform: template
     name: "Kotel - Stav regulace"
@@ -933,6 +1113,111 @@ interval:
             id(kotel_forced_run_timer).execute();
           }
 
+  # Vodní systém - hlavní bezpečnostní kontrola průtoku
+  - interval: 5s
+    then:
+      - lambda: |-
+          unsigned long now = millis();
+          
+          // --- kontrola vypršení pause režimu ---
+          if (id(voda_pause_aktivni) && id(voda_pause_cas_aktivace) > 0) {
+            unsigned long pause_duration = (unsigned long)(id(voda_pause_delka).state * 60.0 * 60.0 * 1000.0); // hodiny na ms
+            if (now - id(voda_pause_cas_aktivace) >= pause_duration) {
+              id(voda_pause_aktivni) = false;
+              id(voda_pause_cas_aktivace) = 0;
+              ESP_LOGI("voda", "Pause režim vypršel - kontrola povodně automaticky zapnuta");
+              id(voda_stav).publish_state("Kontrola povodně zapnuta (pause vypršel)");
+            }
+          }
+          
+          float flow = id(prutok_vody).state;
+          bool has_flow = !isnan(flow) && flow >= id(voda_min_prutok).state;
+          bool valve_open = !id(switch_hlavni_ventil).state;
+
+          // --- týdenní test ventilů ---
+          if (id(voda_test_probiha)) {
+            if (id(voda_test_phase) == 1) {
+              if (now - id(voda_test_phase_start) >= 60000UL) {
+                id(voda_test_phase) = 2;
+                id(voda_test_phase_start) = now;
+                id(voda_stav).publish_state("Test ventil: sledování 30s nulového průtoku");
+                id(error_voda) = "Test ventil: sleduji průtok";
+                ESP_LOGI("voda", "Test ventil: přechod do fáze 2");
+              }
+            } else if (id(voda_test_phase) == 2) {
+              if (!isnan(flow) && flow > 0.0) {
+                id(voda_test_failed) = true;
+                id(voda_havarie_aktivni) = true;
+                id(voda_havarie_typ) = "Test ventil selhal";
+                id(voda_test_phase) = 3;
+                id(voda_test_phase_start) = now;
+                id(voda_stav).publish_state("Test ventil selhal: nenulový průtok");
+                id(error_voda) = "Test ventilu selhal: netěsnost";
+                ESP_LOGW("voda", "Test ventil selhal - průtok detekován");
+              } else if (now - id(voda_test_phase_start) >= 30000UL) {
+                id(voda_test_failed) = false;
+                id(voda_test_phase) = 3;
+                id(voda_test_phase_start) = now;
+                id(voda_stav).publish_state("Test ventil OK");
+                id(error_voda) = "OK";
+                ESP_LOGI("voda", "Test ventil OK");
+              }
+            } else if (id(voda_test_phase) == 3) {
+              if (now - id(voda_test_phase_start) >= 2000UL) {
+                id(switch_hlavni_ventil).turn_off();
+                id(voda_test_probiha) = false;
+                id(voda_test_phase) = 0;
+                id(voda_test_phase_start) = 0;
+                if (id(voda_test_failed)) {
+                  id(voda_stav).publish_state("Test ventil dokončen: selhání");
+                } else {
+                  id(voda_stav).publish_state("Test ventil dokončen: OK");
+                }
+                ESP_LOGI("voda", "Test ventil fáze 3 dokončen");
+              }
+            }
+          }
+
+          // --- detekce vytopení při otevřeném ventilu ---
+          if (!id(voda_pause_aktivni) && !id(voda_test_probiha) && !id(voda_havarie_aktivni) && valve_open) {
+            if (has_flow) {
+              if (id(voda_prutok_above_start) == 0) {
+                id(voda_prutok_above_start) = now;
+              }
+              unsigned long max_duration = (unsigned long)(id(voda_max_cas_prutoku).state * 60.0 * 1000.0);
+              if (max_duration == 0) {
+                max_duration = 20UL * 60UL * 1000UL;
+              }
+              if (now - id(voda_prutok_above_start) >= max_duration) {
+                id(voda_havarie_aktivni) = true;
+                id(voda_havarie_typ) = "Průtok dlouhodobě nad min";
+                char text[128];
+                snprintf(text, sizeof(text), "Havarie: průtok >= %.1f L/min > %d min", id(voda_min_prutok).state, (int)id(voda_max_cas_prutoku).state);
+                id(error_voda) = text;
+                id(voda_stav).publish_state("Havarie! Uzavírám ventil");
+                id(switch_hlavni_ventil).turn_on();
+                ESP_LOGE("voda", "%s", text);
+              }
+            } else {
+              id(voda_prutok_above_start) = 0;
+            }
+          } else if (!valve_open) {
+            id(voda_prutok_above_start) = 0;
+          }
+
+          // Resety stavu a varování
+          if (!id(voda_havarie_aktivni)) {
+            if (!id(voda_varovani_aktivni)) {
+              id(error_voda) = "OK";
+            }
+            if (!has_flow && valve_open) {
+              id(voda_varovani_aktivni) = true;
+              id(voda_varovani_cas) = now;
+              id(voda_stav).publish_state("Varování: žádný průtok");
+            }
+          }
+
+
 script:
   - id: kotel_forced_run_timer
     then:
@@ -952,20 +1237,31 @@ script:
             ESP_LOGW("voda", "Test již probíhá");
             return;
           }
+          if (id(voda_havarie_aktivni)) {
+            ESP_LOGW("voda", "Nelze spustit test - aktivní havárie");
+            return;
+          }
           id(voda_test_probiha) = true;
+          id(voda_test_phase) = 1;
+          id(voda_test_phase_start) = millis();
+          id(voda_test_failed) = false;
           id(voda_stav).publish_state("Týdenní test - zavírám ventil");
-          ESP_LOGI("voda", "Test ventilu: Zavírám");
+          id(error_voda) = "Test ventilu: start";
+          ESP_LOGI("voda", "Spouštím test ventilu: krok 1 (zavírání)");
       - switch.turn_on: switch_hlavni_ventil
-      - delay: 10s
+
+  - id: voda_pause_timer
+    then:
+      - delay: !lambda |-
+          return (unsigned long)(id(voda_pause_delka).state * 60.0 * 60.0 * 1000.0); // hodiny na ms
       - lambda: |-
-          id(voda_stav).publish_state("Týdenní test - otevírám ventil");
-          ESP_LOGI("voda", "Test ventilu: Otevírám");
-      - switch.turn_off: switch_hlavni_ventil
-      - delay: 2s
-      - lambda: |-
-          id(voda_test_probiha) = false;
-          id(voda_stav).publish_state("Týdenní test dokončen");
-          ESP_LOGI("voda", "Test ventilu dokončen");
+          if (id(voda_pause_aktivni)) {
+            id(voda_pause_aktivni) = false;
+            id(voda_pause_cas_aktivace) = 0;
+            ESP_LOGI("voda", "Pause režim vypršel - kontrola povodně automaticky zapnuta");
+            id(voda_stav).publish_state("Kontrola povodně zapnuta (pause vypršel)");
+          }
+
 
 
 
@@ -1043,6 +1339,68 @@ button:
           
           ESP_LOGI("voda", "Spouštím manuální test ventilu");
           id(voda_test_script).execute();
+  
+  # Voda - dočasné vypnutí kontroly povodně (konfigurovatelná délka)
+  - platform: template
+    name: "Voda - Vypnout kontrolu ({{ voda_pause_delka.state | int }}h)"
+    id: voda_pause_kontrola
+    icon: "mdi:water-off"
+    on_press:
+      - lambda: |-
+          unsigned long now = millis();
+          unsigned long pause_duration = (unsigned long)(id(voda_pause_delka).state * 60.0 * 60.0 * 1000.0); // hodiny na ms
+          
+          id(voda_pause_aktivni) = true;
+          id(voda_pause_cas_aktivace) = now;
+          
+          ESP_LOGI("voda", "Dočasné vypnutí kontroly povodně na %.0f hodin", id(voda_pause_delka).state);
+          char text[64];
+          snprintf(text, sizeof(text), "Kontrola povodně vypnuta na %.0fh", (int)id(voda_pause_delka).state);
+          id(voda_stav).publish_state(text);
+          
+          // Naplánovat automatické zapnutí
+          id(voda_pause_timer).execute();
+  
+  # Kalibrace průtokoměru
+  - platform: template
+    name: "Kalibrace - Start"
+    id: kalibrace_start
+    icon: "mdi:play"
+    on_press:
+      - lambda: |-
+          if (id(kalibrace_aktivni)) {
+            ESP_LOGW("kalibrace", "Kalibrace již probíhá");
+            return;
+          }
+          
+          id(kalibrace_aktivni) = true;
+          id(kalibrace_start_cas) = millis();
+          id(kalibrace_start_prutok) = id(celkovy_prutok).state;
+          
+          ESP_LOGI("kalibrace", "Kalibrace začala - počáteční průtok: %.3f L", id(kalibrace_start_prutok));
+          
+  - platform: template
+    name: "Kalibrace - Stop"
+    id: kalibrace_stop
+    icon: "mdi:stop"
+    on_press:
+      - lambda: |-
+          if (!id(kalibrace_aktivni)) {
+            ESP_LOGW("kalibrace", "Žádná kalibrace neprobíhá");
+            return;
+          }
+          
+          float start_l = id(kalibrace_start_prutok);
+          float end_l = id(celkovy_prutok).state;
+          float namereny_prutok = end_l - start_l;
+          float cas_sekundy = (millis() - id(kalibrace_start_cas)) / 1000.0;
+          
+          ESP_LOGI("kalibrace", "Kalibrace dokončena - %.3f L za %.1f s", namereny_prutok, cas_sekundy);
+          ESP_LOGI("kalibrace", "Kalibrace detail: start=%.3f L, end=%.3f L, koef=%.3f", start_l, end_l, id(kalibrace_koeficient));
+          
+          id(kalibrace_aktivni) = false;
+          id(kalibrace_start_cas) = 0;
+          id(kalibrace_start_prutok) = 0.0;
 
 display:
   - platform: ssd1306_i2c
