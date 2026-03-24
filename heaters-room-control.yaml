@@ -303,16 +303,6 @@ globals:
     restore_value: no
     initial_value: '0'
 
-  - id: voda_cas_zavreni
-    type: unsigned long
-    restore_value: no
-    initial_value: '0'
-
-  - id: voda_posledni_kontrola_zavreni
-    type: unsigned long
-    restore_value: no
-    initial_value: '0'
-
   - id: voda_havarie_cas
     type: unsigned long
     restore_value: yes
@@ -332,11 +322,6 @@ globals:
     type: bool
     restore_value: no
     initial_value: 'false'
-
-  - id: voda_posledni_test_den
-    type: int
-    restore_value: yes
-    initial_value: '-1'
 
   # Voda - pause režim
   - id: voda_pause_cas_aktivace
@@ -368,11 +353,6 @@ globals:
     type: bool
     restore_value: no
     initial_value: 'false'
-
-  - id: voda_test_last_trigger_key
-    type: int
-    restore_value: yes
-    initial_value: '0'
 
   - id: display_page
     type: int
@@ -550,6 +530,7 @@ sensor:
     accuracy_decimals: 1
     update_interval: 60s
     icon: "mdi:clock-outline"
+    entity_category: diagnostic
     lambda: |-
       unsigned long current_time = millis();
       unsigned long last_run = id(kotel_last_pump_run_time);
@@ -571,6 +552,7 @@ sensor:
     accuracy_decimals: 1
     update_interval: 1s
     icon: "mdi:timer-outline"
+    entity_category: diagnostic
     lambda: |-
       if (id(voda_prutok_zacatek) == 0) {
         return 0.0;
@@ -586,6 +568,7 @@ sensor:
     accuracy_decimals: 1
     update_interval: 60s
     icon: "mdi:timer-sand"
+    entity_category: diagnostic
     lambda: |-
       if (!id(voda_pause_aktivni)) {
         return 0.0;
@@ -606,6 +589,7 @@ sensor:
     accuracy_decimals: 1
     update_interval: 2s
     icon: "mdi:timer"
+    entity_category: diagnostic
     disabled_by_default: true
     lambda: |-
       if (!id(kalibrace_aktivni) || id(kalibrace_start_cas) == 0) {
@@ -620,6 +604,7 @@ sensor:
     accuracy_decimals: 3
     update_interval: 2s
     icon: "mdi:counter"
+    entity_category: diagnostic
     disabled_by_default: true
     lambda: |-
       if (!id(kalibrace_aktivni)) {
@@ -634,6 +619,7 @@ sensor:
     accuracy_decimals: 2
     update_interval: 30s
     icon: "mdi:cog"
+    entity_category: diagnostic
     disabled_by_default: true
     lambda: |-
       return id(kalibrace_koeficient);
@@ -656,6 +642,7 @@ number:
     unit_of_measurement: "°C"
     mode: box
     icon: "mdi:thermometer-chevron-up"
+    entity_category: config
     on_value:
       then:
         - lambda: |-
@@ -680,6 +667,7 @@ number:
     unit_of_measurement: "°C"
     mode: box
     icon: "mdi:thermometer-chevron-down"
+    entity_category: config
     on_value:
       then:
         - lambda: |-
@@ -703,6 +691,7 @@ number:
     unit_of_measurement: "°C"
     mode: box
     icon: "mdi:fire"
+    entity_category: config
 
   - platform: template
     name: "Kotel - Komín VYP"
@@ -716,6 +705,7 @@ number:
     unit_of_measurement: "°C"
     mode: box
     icon: "mdi:fire-off"
+    entity_category: config
 
   # Havarijní limit
   - platform: template
@@ -730,6 +720,7 @@ number:
     unit_of_measurement: "°C"
     mode: box
     icon: "mdi:alert-octagon"
+    entity_category: config
 
   # Voda - max čas průtoku
   - platform: template
@@ -744,6 +735,7 @@ number:
     unit_of_measurement: "min"
     mode: box
     icon: "mdi:timer-alert-outline"
+    entity_category: config
 
   # Voda - min průtok
   - platform: template
@@ -758,50 +750,7 @@ number:
     unit_of_measurement: "L/min"
     mode: box
     icon: "mdi:water-outline"
-
-  # Voda - čas varování
-  - platform: template
-    name: "Voda - Čas varování"
-    id: voda_cas_varovani
-    min_value: 0
-    max_value: 300
-    step: 10
-    initial_value: 60
-    optimistic: true
-    restore_value: true
-    unit_of_measurement: "s"
-    mode: box
-    icon: "mdi:bell-alert-outline"
-    disabled_by_default: true  # <-- SKRYTO
-
-  # Voda - den týdenního testu
-  - platform: template
-    name: "Voda - Den týdenního testu"
-    id: voda_test_den
-    min_value: 0
-    max_value: 6
-    step: 1
-    initial_value: 1
-    optimistic: true
-    restore_value: true
-    mode: box
-    icon: "mdi:calendar-week"
-    disabled_by_default: true  # <-- SKRYTO
-
-  # Voda - hodina týdenního testu
-  - platform: template
-    name: "Voda - Hodina týdenního testu"
-    id: voda_test_hodina
-    min_value: 0
-    max_value: 23
-    step: 1
-    initial_value: 2
-    optimistic: true
-    restore_value: true
-    unit_of_measurement: "h"
-    mode: box
-    icon: "mdi:clock-outline"
-    disabled_by_default: true  # <-- SKRYTO
+    entity_category: config
 
   # Voda - délka pause
   - platform: template
@@ -816,6 +765,7 @@ number:
     unit_of_measurement: "h"
     mode: box
     icon: "mdi:timer-pause-outline"
+    entity_category: config
     disabled_by_default: true  # <-- SKRYTO
 
   # Kalibrace průtokoměru
@@ -831,6 +781,7 @@ number:
     unit_of_measurement: "imp/L"
     mode: box
     icon: "mdi:cog"
+    entity_category: diagnostic
     disabled_by_default: true
     on_value:
       then:
@@ -989,6 +940,7 @@ text_sensor:
     id: error_kotel_text
     update_interval: never
     icon: "mdi:alert-circle"
+    entity_category: diagnostic
     lambda: return id(error_kotel_tuha_paliva);
 
   - platform: template
@@ -996,6 +948,7 @@ text_sensor:
     id: error_voda_text
     update_interval: never
     icon: "mdi:alert-circle"
+    entity_category: diagnostic
     lambda: return id(error_voda);
 # ============================================================================
 # HLAVNÍ REGULAČNÍ LOGIKA
@@ -1367,6 +1320,7 @@ button:
     name: "Voda - Reset havárie"
     id: voda_reset_havarie
     icon: "mdi:restart-alert"
+    entity_category: diagnostic
     on_press:
       - lambda: |-
           if (id(voda_havarie_aktivni)) {
@@ -1385,6 +1339,7 @@ button:
     name: "Voda - Test ventilu"
     id: voda_test_manual
     icon: "mdi:valve-closed"
+    entity_category: diagnostic
     on_press:
       - lambda: |-
           if (id(voda_havarie_aktivni)) {
@@ -1405,6 +1360,7 @@ button:
     name: "Kalibrace - Start"
     id: kalibrace_start
     icon: "mdi:play"
+    entity_category: diagnostic
     on_press:
       - lambda: |-
           if (id(kalibrace_aktivni)) {
@@ -1422,6 +1378,7 @@ button:
     name: "Kalibrace - Stop"
     id: kalibrace_stop
     icon: "mdi:stop"
+    entity_category: diagnostic
     on_press:
       - lambda: |-
           if (!id(kalibrace_aktivni)) {
