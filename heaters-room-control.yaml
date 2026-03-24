@@ -122,6 +122,33 @@
 esphome:
   name: "heaters-room-control"
   friendly_name: Kotelna regulator
+  on_boot:
+    priority: -100
+    then:
+      - lambda: |-
+          id(voda_celkovy_prutok_snapshot) = 0.0f;
+          id(voda_celkovy_prutok_posledni_ulozeni) = millis();
+          ESP_LOGI("voda", "Obnoven celkovy odber vody: %.3f L", id(voda_celkovy_prutok_zaklad));
+          if (id(voda_havarie_aktivni)) {
+            id(voda_stav).publish_state("Havarie aktivni");
+          } else if (id(voda_pause_aktivni)) {
+            id(voda_stav).publish_state("Kontrola povodne pozastavena");
+          } else if (id(switch_hlavni_ventil).state) {
+            id(voda_stav).publish_state("Ventil uzavren");
+          } else {
+            id(voda_stav).publish_state("Pripraveno");
+          }
+  on_shutdown:
+    then:
+      - lambda: |-
+          float raw_total = id(celkovy_prutok).state;
+          if (!isnan(raw_total)) {
+            float delta = raw_total - id(voda_celkovy_prutok_snapshot);
+            if (delta > 0.0f) {
+              id(voda_celkovy_prutok_zaklad) += delta;
+              id(voda_celkovy_prutok_snapshot) = raw_total;
+            }
+          }
 
 esp32:
   board: esp32-c6-devkitc-1
@@ -301,16 +328,6 @@ globals:
     restore_value: yes
     initial_value: '""'
 
-  - id: voda_varovani_aktivni
-    type: bool
-    restore_value: no
-    initial_value: 'false'
-
-  - id: voda_varovani_cas
-    type: unsigned long
-    restore_value: no
-    initial_value: '0'
-
   - id: voda_test_probiha
     type: bool
     restore_value: no
@@ -387,6 +404,21 @@ globals:
     restore_value: yes
     initial_value: '7.5'
 
+  - id: voda_celkovy_prutok_zaklad
+    type: float
+    restore_value: yes
+    initial_value: '0.0'
+
+  - id: voda_celkovy_prutok_snapshot
+    type: float
+    restore_value: yes
+    initial_value: '0.0'
+
+  - id: voda_celkovy_prutok_posledni_ulozeni
+    type: unsigned long
+    restore_value: no
+    initial_value: '0'
+
 sensor:
   - platform: dallas_temp
     address: 0x3c00000559fe8628
@@ -434,23 +466,21 @@ sensor:
       mode:
         input: true
         pullup: true
-    name: "Aktuální průtok vody (interní)"
+    name: "Aktuální průtok vody"
     id: prutok_vody
-    internal: true
     unit_of_measurement: "L/min"
-    # 1ms filtr: staci na potlaceni sumu/indukcnich spiku na vedeni, ale propusti realne pulzy prutokomeru
-    internal_filter: 1ms
     timeout: 5s
+    internal: true
     filters:
       - lambda: return x / id(kalibrace_koeficient);
     total:
-      name: "Celkový průtok vody (interní)"
+      name: "Celkový průtok vody"
       id: celkovy_prutok
-      internal: true
       unit_of_measurement: "L"
       accuracy_decimals: 3
+      internal: true
       filters:
-        - lambda: return x / id(kalibrace_koeficient);  # total impulsy -> litry
+        - lambda: return x / id(kalibrace_koeficient);
     on_value:
       then:
         - lambda: |-
@@ -458,7 +488,7 @@ sensor:
               id(voda_posledni_prutok) = millis();
             }
 
-  # Voda - hodnoty pro HA (omezene tempo publikace kvuli vykonu)
+  # Voda - hodnoty pro HA (update_interval 5s)
   - platform: template
     name: "Aktuální průtok vody"
     id: prutok_vody_ha
@@ -474,11 +504,19 @@ sensor:
     id: celkovy_prutok_ha
     unit_of_measurement: "L"
     accuracy_decimals: 2
-    update_interval: 10s
+    update_interval: 5s
     icon: "mdi:counter"
     lambda: |-
-      return id(celkovy_prutok).state;
-  
+      float raw_total = id(celkovy_prutok).state;
+      if (isnan(raw_total)) {
+        return id(voda_celkovy_prutok_zaklad);
+      }
+      float delta = raw_total - id(voda_celkovy_prutok_snapshot);
+      if (delta < 0.0f) {
+        delta = raw_total;
+      }
+      return id(voda_celkovy_prutok_zaklad) + delta;
+
   # Vypočítané rozdíly teplot
   - platform: template
     name: "Rozdíl teplot - Plynový kotel"
@@ -861,6 +899,34 @@ switch:
           id(kotel_pump_manual_override) = false;
           // Čerpadlo se vypne až když to dovolí podmínky
 
+  - platform: template
+    name: "Voda - Vypnout kontrolu"
+    id: voda_pause_kontrola
+    icon: "mdi:water-off"
+    lambda: |-
+      return id(voda_pause_aktivni);
+    turn_on_action:
+      - lambda: |-
+          unsigned long now = millis();
+          id(voda_pause_aktivni) = true;
+          id(voda_pause_cas_aktivace) = now;
+
+          ESP_LOGI("voda", "Dočasné vypnutí kontroly povodně na %.0f hodin", id(voda_pause_delka).state);
+          char text[64];
+          snprintf(text, sizeof(text), "Kontrola povodně vypnuta na %.0fh", (int) id(voda_pause_delka).state);
+          id(voda_stav).publish_state(text);
+
+          id(voda_pause_timer).execute();
+    turn_off_action:
+      - lambda: |-
+          if (!id(voda_pause_aktivni)) {
+            return;
+          }
+          id(voda_pause_aktivni) = false;
+          id(voda_pause_cas_aktivace) = 0;
+          ESP_LOGI("voda", "Kontrola povodně ručně zapnuta");
+          id(voda_stav).publish_state("Pripraveno");
+
 # ============================================================================
 # STAVY A DIAGNOSTIKA
 # ============================================================================
@@ -899,20 +965,6 @@ binary_sensor:
     device_class: safety
     lambda: |-
       return id(voda_havarie_aktivni);
-
-  - platform: template
-    name: "Voda - Varování"
-    id: voda_varovani_status
-    device_class: problem
-    lambda: |-
-      return id(voda_varovani_aktivni);
-
-  - platform: template
-    name: "Voda - OK"
-    id: voda_ok_status
-    device_class: power
-    lambda: |-
-      return (!id(voda_havarie_aktivni) && !id(voda_varovani_aktivni));
 text_sensor:
   - platform: template
     name: "Kotel - Stav regulace"
@@ -965,6 +1017,36 @@ interval:
             id(switch_led_red).turn_on();
           } else {
             id(switch_led_red).turn_off();
+          }
+
+  - interval: 30s
+    then:
+      - lambda: |-
+          const float save_step_l = 50.0f;
+          const unsigned long save_timeout_ms = 60UL * 60UL * 1000UL;
+          float raw_total = id(celkovy_prutok).state;
+          if (isnan(raw_total)) {
+            return;
+          }
+
+          float delta = raw_total - id(voda_celkovy_prutok_snapshot);
+          if (delta < 0.0f) {
+            id(voda_celkovy_prutok_snapshot) = 0.0f;
+            delta = raw_total;
+          }
+
+          if (delta <= 0.0f) {
+            return;
+          }
+
+          unsigned long now = millis();
+          bool save_due_to_volume = delta >= save_step_l;
+          bool save_due_to_time = (now - id(voda_celkovy_prutok_posledni_ulozeni)) >= save_timeout_ms;
+
+          if (save_due_to_volume || save_due_to_time) {
+            id(voda_celkovy_prutok_zaklad) += delta;
+            id(voda_celkovy_prutok_snapshot) = raw_total;
+            id(voda_celkovy_prutok_posledni_ulozeni) = now;
           }
   # Hlavní regulační logika kotel - každých 10 sekund
   - interval: 10s
@@ -1207,16 +1289,9 @@ interval:
             id(voda_prutok_above_start) = 0;
           }
 
-          // Resety stavu a varování
+          // Resety stavu - OK pokud není havárie
           if (!id(voda_havarie_aktivni)) {
-            if (!id(voda_varovani_aktivni)) {
-              id(error_voda) = "OK";
-            }
-            if (!has_flow && valve_open) {
-              id(voda_varovani_aktivni) = true;
-              id(voda_varovani_cas) = now;
-              id(voda_stav).publish_state("Varování: žádný průtok");
-            }
+            id(error_voda) = "OK";
           }
 
 
@@ -1305,23 +1380,6 @@ button:
             ESP_LOGI("voda", "Žádná havárie k resetu");
           }
   
-  # Voda - zrušit varování
-  - platform: template
-    name: "Voda - Zrušit varování"
-    id: voda_zrusit_varovani
-    icon: "mdi:bell-cancel-outline"
-    on_press:
-      - lambda: |-
-          if (id(voda_varovani_aktivni)) {
-            ESP_LOGI("voda", "Varování zrušeno uživatelem");
-            id(voda_varovani_aktivni) = false;
-            id(voda_varovani_cas) = 0;
-            id(voda_prutok_zacatek) = millis();
-            id(voda_stav).publish_state("Varování zrušeno - časovač resetován");
-          } else {
-            ESP_LOGI("voda", "Žádné varování k zrušení");
-          }
-  
   # Voda - manuální test ventilu
   - platform: template
     name: "Voda - Test ventilu"
@@ -1341,27 +1399,6 @@ button:
           
           ESP_LOGI("voda", "Spouštím manuální test ventilu");
           id(voda_test_script).execute();
-  
-  # Voda - dočasné vypnutí kontroly povodně (konfigurovatelná délka)
-  - platform: template
-    name: "Voda - Vypnout kontrolu ({{ voda_pause_delka.state | int }}h)"
-    id: voda_pause_kontrola
-    icon: "mdi:water-off"
-    on_press:
-      - lambda: |-
-          unsigned long now = millis();
-          unsigned long pause_duration = (unsigned long)(id(voda_pause_delka).state * 60.0 * 60.0 * 1000.0); // hodiny na ms
-          
-          id(voda_pause_aktivni) = true;
-          id(voda_pause_cas_aktivace) = now;
-          
-          ESP_LOGI("voda", "Dočasné vypnutí kontroly povodně na %.0f hodin", id(voda_pause_delka).state);
-          char text[64];
-          snprintf(text, sizeof(text), "Kontrola povodně vypnuta na %.0fh", (int)id(voda_pause_delka).state);
-          id(voda_stav).publish_state(text);
-          
-          // Naplánovat automatické zapnutí
-          id(voda_pause_timer).execute();
   
   # Kalibrace průtokoměru
   - platform: template
@@ -1565,11 +1602,9 @@ display:
         it.printf(126, 36, id(font_small), TextAlign::TOP_RIGHT, 
                   id(switch_hlavni_ventil).state ? "ZAVRENY" : "OTEVRENY");
       
-        // Havárie nebo varování
+        // Havárie
         if (id(voda_havarie_aktivni)) {
           it.printf(2, 46, id(font_small), "HAVARIE!");
-        } else if (id(voda_varovani_aktivni)) {
-          it.printf(2, 46, id(font_small), "VAROVANI!");
         }
       }
       // STRÁNKA 3: ERROR/HAVÁRIE (zobrazí se jen při problému)
