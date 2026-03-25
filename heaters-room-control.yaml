@@ -265,22 +265,7 @@ globals:
     restore_value: no
     initial_value: 'false'
 
-  # Voda - průtok a havárie
-  - id: voda_prutok_zacatek
-    type: unsigned long
-    restore_value: no
-    initial_value: '0'
-
-  - id: voda_posledni_prutok
-    type: unsigned long
-    restore_value: no
-    initial_value: '0'
-
-  - id: voda_havarie_cas
-    type: unsigned long
-    restore_value: yes
-    initial_value: '0'
-
+  # Voda - havárie
   - id: voda_havarie_aktivni
     type: bool
     restore_value: yes
@@ -330,10 +315,6 @@ globals:
   - id: display_page
     type: int
     restore_value: no
-    initial_value: '0'
-  - id: last_valve_close_time
-    type: unsigned long
-    restore_value: yes
     initial_value: '0'
 
   # Kalibrace průtokoměru
@@ -462,11 +443,7 @@ sensor:
       filters:
         - lambda: return x / id(kalibrace_koeficient);
     on_value:
-      then:
-        - lambda: |-
-            if (x > 0.01) {
-              id(voda_posledni_prutok) = millis();
-            }
+      then: []
 
   # Voda - hodnoty pro HA (update_interval 5s)
   - platform: template
@@ -543,22 +520,6 @@ sensor:
       }
       
       return time_diff / (1000.0 * 60.0 * 60.0); // převod na hodiny
-  
-  # Voda - čas průtoku
-  - platform: template
-    name: "Voda - Čas průtoku"
-    id: voda_cas_prutoku
-    unit_of_measurement: "min"
-    accuracy_decimals: 1
-    update_interval: 1s
-    icon: "mdi:timer-outline"
-    entity_category: diagnostic
-    lambda: |-
-      if (id(voda_prutok_zacatek) == 0) {
-        return 0.0;
-      }
-      unsigned long cas = millis() - id(voda_prutok_zacatek);
-      return cas / (60.0 * 1000.0);
   
   # Voda - zbývající čas pause
   - platform: template
@@ -829,7 +790,9 @@ output:
     pin: GPIO2
     id: gpio_rele_plyn
   - platform: gpio
-    pin: GPIO21
+    pin:
+      number: GPIO21
+      inverted: true
     id: gpio_led_red
 
 # ============================================================================
@@ -841,16 +804,12 @@ switch:
     name: LED Red
     output: gpio_led_red
     id: switch_led_red
-    internal: True
+    # internal: True
   
   - platform: output
     output: gpio_rele_ventil_voda
     name: "Hlavní ventil vody"
     id: switch_hlavni_ventil
-    on_turn_off:
-      then:
-        - lambda: |-
-            id(last_valve_close_time) = millis();
 
   - platform: output
     name: Oběhové čerpadlo kotle
@@ -972,6 +931,15 @@ binary_sensor:
     lambda: |-
       return id(plyn_havarie_aktivni);
 
+  - platform: template
+    name: "Zařízení - Vše OK"
+    id: system_all_ok
+    device_class: problem
+    lambda: |-
+      return !(id(kotel_status_havarie).state || 
+               id(plyn_havarie_aktivni) || 
+               id(voda_havarie_aktivni));
+
 text_sensor:
   - platform: template
     name: "Kotel - Stav regulace"
@@ -1005,18 +973,29 @@ text_sensor:
     id: plyn_stav
     update_interval: never
     icon: "mdi:gas-burner"
+
+  - platform: template
+    name: "Zařízení - Stav"
+    id: system_status
+    update_interval: 5s
+    icon: "mdi:home-alert"
     lambda: |-
+      if (id(system_all_ok).state) {
+        return "OK";
+      }
+      std::string result;
+      if (id(kotel_status_havarie).state) {
+        result += "Kotel: " + id(error_kotel_tuha_paliva);
+      }
       if (id(plyn_havarie_aktivni)) {
-        return id(plyn_havarie_typ);
+        if (!result.empty()) result += " | ";
+        result += "Plyn: " + id(plyn_havarie_typ);
       }
-      if (id(plyn_povolen)) {
-        unsigned long ago = millis() - id(plyn_zapnuto_cas);
-        if (ago < 5UL * 60UL * 1000UL) {
-          return "Startovní režim (0-5 min)";
-        }
-        return "Běží";
+      if (id(voda_havarie_aktivni)) {
+        if (!result.empty()) result += " | ";
+        result += "Voda: " + id(voda_havarie_typ);
       }
-      return "Vypnutý";
+      return result;
 
 # ============================================================================
 # HLAVNÍ REGULAČNÍ LOGIKA
@@ -1027,14 +1006,23 @@ interval:
   - interval: 4s
     then:
       - lambda: |-
-          int max_pages = id(kotel_status_havarie).state ? 4 : 3;
-          id(display_page) = (id(display_page) + 1) % max_pages;
+          // Stránky 0-3: vždy (PLYN, KOTEL, VODA, KOTEL 2)
+          // Stránky 4-6: havárie (KOTEL, PLYN, VODA) - jen pokud aktivní
+          int next = (id(display_page) + 1) % 7;
+          // Přeskočit havárie stránky které nejsou aktivní
+          for (int i = 0; i < 7; i++) {
+            if (next == 4 && !id(kotel_status_havarie).state) { next = (next + 1) % 7; continue; }
+            if (next == 5 && !id(plyn_havarie_aktivni))       { next = (next + 1) % 7; continue; }
+            if (next == 6 && !id(voda_havarie_aktivni))       { next = (next + 1) % 7; continue; }
+            break;
+          }
+          id(display_page) = next;
 
   # LED status indikace - každou sekundu
   - interval: 1s
     then:
       - lambda: |-
-          if (id(kotel_status_havarie).state) {
+          if (!id(system_all_ok).state) {
             id(switch_led_red).turn_on();
           } else {
             id(switch_led_red).turn_off();
@@ -1483,12 +1471,15 @@ font:
   - file: "gfonts://Roboto"
     id: font_small
     size: 10
+    glyphs: " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~°áčďéěíňóřšťúůýžÁČĎÉĚÍŇÓŘŠŤÚŮÝŽ"
   - file: "gfonts://Roboto"
     id: font_medium
     size: 12
+    glyphs: " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~°áčďéěíňóřšťúůýžÁČĎÉĚÍŇÓŘŠŤÚŮÝŽ"
   - file: "gfonts://Roboto"
     id: font_large
     size: 16
+    glyphs: " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~°áčďéěíňóřšťúůýžÁČĎÉĚÍŇÓŘŠŤÚŮÝŽ"
 
 
 
@@ -1509,7 +1500,6 @@ button:
           if (id(voda_havarie_aktivni)) {
             ESP_LOGI("voda", "Manuální reset havárie");
             id(voda_havarie_aktivni) = false;
-            id(voda_havarie_cas) = 0;
             id(voda_havarie_typ) = "";
             id(error_voda) = "";
             id(voda_stav).publish_state("Reset havárie - ventil stále zavřen");
@@ -1734,23 +1724,13 @@ display:
             it.printf(126, 16, id(font_small), TextAlign::TOP_RIGHT, "---");
           }
         
-          // Čas průtoku
-          if (id(voda_prutok_zacatek) > 0) {
-            it.printf(2, 26, id(font_small), "Cas:");
-            if (!isnan(id(voda_cas_prutoku).state)) {
-              it.printf(126, 26, id(font_small), TextAlign::TOP_RIGHT, "%.1fmin", id(voda_cas_prutoku).state);
-            } else {
-              it.printf(126, 26, id(font_small), TextAlign::TOP_RIGHT, "---");
-            }
+          // Celkový průtok
+          it.printf(2, 26, id(font_small), "Celkem:");
+          if (!isnan(id(celkovy_prutok).state)) {
+            it.printf(126, 26, id(font_small), TextAlign::TOP_RIGHT, "%.0f L", 
+                      id(celkovy_prutok).state);
           } else {
-            // Celkový průtok
-            it.printf(2, 26, id(font_small), "Celkem:");
-            if (!isnan(id(celkovy_prutok).state)) {
-              it.printf(126, 26, id(font_small), TextAlign::TOP_RIGHT, "%.0f L", 
-                        id(celkovy_prutok).state);
-            } else {
-              it.printf(126, 26, id(font_small), TextAlign::TOP_RIGHT, "---");
-            }
+            it.printf(126, 26, id(font_small), TextAlign::TOP_RIGHT, "---");
           }
         }
       
@@ -1764,51 +1744,104 @@ display:
           it.printf(2, 46, id(font_small), "HAVARIE!");
         }
       }
-      // STRÁNKA 3: ERROR/HAVÁRIE (zobrazí se jen při problému)
+      // STRÁNKA 3: KOTEL 2 (komín)
       else if (id(display_page) == 3) {
-        if (id(kotel_status_havarie).state &&
-            (isnan(id(teplota_kotel_vystup).state) || isnan(id(teplota_kotel_vrat).state) || isnan(id(teplota_komin).state))) {
-          // CHYBA ČIDLA
-          it.printf(64, 0, id(font_medium), COLOR_OFF, TextAlign::TOP_CENTER, "CHYBA");
-          
-          it.printf(2, 16, id(font_small), "Vystup:");
-          it.printf(126, 16, id(font_small), TextAlign::TOP_RIGHT, 
-                    isnan(id(teplota_kotel_vystup).state) ? "CHYBA" : "OK");
-          
-          it.printf(2, 26, id(font_small), "Vrat:");
-          it.printf(126, 26, id(font_small), TextAlign::TOP_RIGHT, 
-                    isnan(id(teplota_kotel_vrat).state) ? "CHYBA" : "OK");
+        it.printf(64, 0, id(font_medium), COLOR_OFF, TextAlign::TOP_CENTER, "KOTEL 2");
 
-          it.printf(2, 36, id(font_small), "Komin:");
-          it.printf(126, 36, id(font_small), TextAlign::TOP_RIGHT,
-                    isnan(id(teplota_komin).state) ? "CHYBA" : "OK");
+        // Teplota komína
+        it.printf(2, 16, id(font_small), "Komin:");
+        if (!isnan(id(teplota_komin).state)) {
+          it.printf(126, 16, id(font_small), TextAlign::TOP_RIGHT, "%.0f°C", id(teplota_komin).state);
+        } else {
+          it.printf(126, 16, id(font_small), TextAlign::TOP_RIGHT, "CHYBA");
+        }
 
-          it.printf(2, 46, id(font_small), "Cerpadlo: ZAP");
-        } else if (id(kotel_status_havarie).state) {
-          // HAVÁRIE - bílé pozadí, černý text
-          it.printf(64, 0, id(font_medium), COLOR_OFF, TextAlign::TOP_CENTER, "HAVARIE!");
-          
-          // Teplota výstupu
-          it.printf(2, 16, id(font_small), "Teplota:");
-          if (!isnan(id(teplota_kotel_vystup).state)) {
-            it.printf(126, 16, id(font_small), TextAlign::TOP_RIGHT, "%.1f°C", 
-                      id(teplota_kotel_vystup).state);
-          } else {
-            it.printf(126, 16, id(font_small), TextAlign::TOP_RIGHT, "---");
-          }
-          
-          // Havarijní limit
-          it.printf(2, 26, id(font_small), "Limit:");
-          it.printf(126, 26, id(font_small), TextAlign::TOP_RIGHT, "%.0f°C", 
-                    id(kotel_havarijni_limit).state);
-          
-          // Stav čerpadla
-          it.printf(2, 36, id(font_small), "Cerpadlo:");
-          it.printf(126, 36, id(font_small), TextAlign::TOP_RIGHT, 
-                    id(switch_obehove_cerpadlo).state ? "ZAP" : "VYP");
-          
-          // Akce
-          it.printf(2, 46, id(font_small), "Akce: Chlazeni!");
-          
+        // Topí dle komína
+        it.printf(2, 26, id(font_small), "Topi:");
+        it.printf(126, 26, id(font_small), TextAlign::TOP_RIGHT,
+                  id(kotel_status_topi).state ? "ANO" : "NE");
+
+        // Havarijní limit
+        it.printf(2, 36, id(font_small), "Hav.limit:");
+        it.printf(126, 36, id(font_small), TextAlign::TOP_RIGHT, "%.0f°C",
+                  id(kotel_havarijni_limit).state);
+
+        // Stav regulace
+        it.printf(2, 46, id(font_small), "%.22s", id(kotel_stav_regulace).state.c_str());
+      }
+      // STRÁNKA 4: KOTEL HAVÁRIE
+      else if (id(display_page) == 4) {
+        it.printf(64, 0, id(font_medium), COLOR_OFF, TextAlign::TOP_CENTER, "!!KOTEL!!");
+
+        // Error text (max 22 znaků)
+        it.printf(2, 16, id(font_small), "%.22s", id(error_kotel_tuha_paliva).c_str());
+
+        it.printf(2, 26, id(font_small), "Vystup:");
+        if (!isnan(id(teplota_kotel_vystup).state)) {
+          it.printf(126, 26, id(font_small), TextAlign::TOP_RIGHT, "%.1f°C", id(teplota_kotel_vystup).state);
+        } else {
+          it.printf(126, 26, id(font_small), TextAlign::TOP_RIGHT, "CHYBA");
+        }
+
+        it.printf(2, 36, id(font_small), "Vrat:");
+        if (!isnan(id(teplota_kotel_vrat).state)) {
+          it.printf(126, 36, id(font_small), TextAlign::TOP_RIGHT, "%.1f°C", id(teplota_kotel_vrat).state);
+        } else {
+          it.printf(126, 36, id(font_small), TextAlign::TOP_RIGHT, "CHYBA");
+        }
+
+        it.printf(2, 46, id(font_small), "Cerpadlo:");
+        it.printf(126, 46, id(font_small), TextAlign::TOP_RIGHT,
+                  id(switch_obehove_cerpadlo).state ? "ZAP" : "VYP");
+      }
+      // STRÁNKA 5: PLYN HAVÁRIE
+      else if (id(display_page) == 5) {
+        it.printf(64, 0, id(font_medium), COLOR_OFF, TextAlign::TOP_CENTER, "!!PLYN!!");
+
+        it.printf(2, 16, id(font_small), "%.22s", id(plyn_havarie_typ).c_str());
+
+        it.printf(2, 26, id(font_small), "Vystup:");
+        if (!isnan(id(teplota_plynovy_vystup).state)) {
+          it.printf(126, 26, id(font_small), TextAlign::TOP_RIGHT, "%.1f°C", id(teplota_plynovy_vystup).state);
+        } else {
+          it.printf(126, 26, id(font_small), TextAlign::TOP_RIGHT, "CHYBA");
+        }
+
+        it.printf(2, 36, id(font_small), "Vrat:");
+        if (!isnan(id(teplota_plynovy_vrat).state)) {
+          it.printf(126, 36, id(font_small), TextAlign::TOP_RIGHT, "%.1f°C", id(teplota_plynovy_vrat).state);
+        } else {
+          it.printf(126, 36, id(font_small), TextAlign::TOP_RIGHT, "CHYBA");
+        }
+
+        it.printf(2, 46, id(font_small), "Delta:");
+        if (!isnan(id(rozdil_plynovy).state)) {
+          it.printf(126, 46, id(font_small), TextAlign::TOP_RIGHT, "%.1f°C", id(rozdil_plynovy).state);
+        } else {
+          it.printf(126, 46, id(font_small), TextAlign::TOP_RIGHT, "---");
+        }
+      }
+      // STRÁNKA 6: VODA HAVÁRIE
+      else if (id(display_page) == 6) {
+        it.printf(64, 0, id(font_medium), COLOR_OFF, TextAlign::TOP_CENTER, "!!VODA!!");
+
+        it.printf(2, 16, id(font_small), "%.22s", id(voda_havarie_typ).c_str());
+
+        it.printf(2, 26, id(font_small), "Prutok:");
+        if (!isnan(id(prutok_vody).state)) {
+          it.printf(126, 26, id(font_small), TextAlign::TOP_RIGHT, "%.1f L/m", id(prutok_vody).state);
+        } else {
+          it.printf(126, 26, id(font_small), TextAlign::TOP_RIGHT, "---");
+        }
+
+        it.printf(2, 36, id(font_small), "Ventil:");
+        it.printf(126, 36, id(font_small), TextAlign::TOP_RIGHT,
+                  id(switch_hlavni_ventil).state ? "ZAVRENY" : "OTEVRENY");
+
+        it.printf(2, 46, id(font_small), "Celkem:");
+        if (!isnan(id(celkovy_prutok).state)) {
+          it.printf(126, 46, id(font_small), TextAlign::TOP_RIGHT, "%.0f L", id(celkovy_prutok).state);
+        } else {
+          it.printf(126, 46, id(font_small), TextAlign::TOP_RIGHT, "---");
         }
       }
