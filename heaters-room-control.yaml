@@ -1362,6 +1362,9 @@ interval:
       - lambda: |-
           unsigned long now = millis();
           bool should_be_on = id(plyn_povolen) && !id(plyn_havarie_aktivni);
+          float temp_vystup = id(teplota_plynovy_vystup).state;
+          float temp_vrat = id(teplota_plynovy_vrat).state;
+          bool cidla_plynu_ok = !isnan(temp_vystup) && !isnan(temp_vrat);
           
           // 1. FYZICKÉ SPÍNÁNÍ RELÉ
           if (should_be_on && !id(switch_plynovy_kotel).state) {
@@ -1379,20 +1382,27 @@ interval:
             unsigned long five_minutes = 5UL * 60UL * 1000UL;
             
             if (elapsed >= five_minutes) {
-              float diff = id(rozdil_plynovy).state;
-              if (!isnan(diff) && diff >= id(plyn_min_rozdil).state) {
-                // Velký rozdíl → kotel topí, označíme první check jako prošlý
-                id(plyn_prvni_check_prosel) = true;
-                ESP_LOGI("plyn", "První check OK - kotel topí (Δ%.1f°C)", diff);
-              } else if (!isnan(diff)) {
-                // Malý rozdíl, výstup určí typ havárie
-                float t_out = id(teplota_plynovy_vystup).state;
-                bool studeny = isnan(t_out) || t_out < id(plyn_min_teplota_vystup).state;
-                ESP_LOGE("plyn", "HAVÁRIE (5min check): Δ%.1f°C, výstup%.1f°C - kotel netopí!", diff, t_out);
+              if (!cidla_plynu_ok) {
+                ESP_LOGE("plyn", "HAVÁRIE (5min check): chyba čidel plynu, výstup=%.1f°C, vrat=%.1f°C", temp_vystup, temp_vrat);
                 id(plyn_havarie_aktivni) = true;
-                id(plyn_havarie_typ) = studeny ? "Kotel netopí - nízká teplota" : "Kotel netopí";
+                id(plyn_havarie_typ) = "Chyba čidel plynu";
                 id(plyn_havarie_cas) = now;
                 id(switch_plynovy_kotel).turn_off();
+              } else {
+                float diff = id(rozdil_plynovy).state;
+                if (diff >= id(plyn_min_rozdil).state) {
+                // Velký rozdíl → kotel topí, označíme první check jako prošlý
+                  id(plyn_prvni_check_prosel) = true;
+                  ESP_LOGI("plyn", "První check OK - kotel topí (Δ%.1f°C)", diff);
+                } else {
+                // Malý rozdíl, výstup určí typ havárie
+                  bool studeny = temp_vystup < id(plyn_min_teplota_vystup).state;
+                  ESP_LOGE("plyn", "HAVÁRIE (5min check): Δ%.1f°C, výstup%.1f°C - kotel netopí!", diff, temp_vystup);
+                  id(plyn_havarie_aktivni) = true;
+                  id(plyn_havarie_typ) = studeny ? "Kotel netopí - nízká teplota" : "Kotel netopí";
+                  id(plyn_havarie_cas) = now;
+                  id(switch_plynovy_kotel).turn_off();
+                }
               }
             }
           }
@@ -1400,7 +1410,9 @@ interval:
           // 3. PUBLIKOVÁNÍ STAVU
           id(plyn_stav).publish_state(
             id(plyn_havarie_aktivni) ? id(plyn_havarie_typ) :
-            (id(plyn_povolen) ? "Běží" : "Vypnutý")
+            (id(plyn_povolen)
+              ? ((now - id(plyn_zapnuto_cas)) < 5UL * 60UL * 1000UL ? "Startovní režim (0-5 min)" : "Běží")
+              : "Vypnutý")
           );
 
   # Minutový check - stejný test jako při 5min, ale po prvním průchodu = akumulátor natopen
@@ -1408,25 +1420,35 @@ interval:
     then:
       - lambda: |-
           unsigned long now = millis();
+          float temp_vystup = id(teplota_plynovy_vystup).state;
+          float temp_vrat = id(teplota_plynovy_vrat).state;
           
           // Spustí se jen pokud první check prošel (kotel jednou topil) a není havárie
           if (!id(plyn_povolen) || id(plyn_havarie_aktivni) || !id(plyn_prvni_check_prosel)) {
             return;
           }
+
+          if (isnan(temp_vystup) || isnan(temp_vrat)) {
+            ESP_LOGE("plyn", "HAVÁRIE (minutový check): chyba čidel plynu, výstup=%.1f°C, vrat=%.1f°C", temp_vystup, temp_vrat);
+            id(plyn_havarie_aktivni) = true;
+            id(plyn_havarie_typ) = "Chyba čidel plynu";
+            id(plyn_havarie_cas) = now;
+            id(switch_plynovy_kotel).turn_off();
+            return;
+          }
           
           float diff = id(rozdil_plynovy).state;
-          if (isnan(diff) || diff >= id(plyn_min_rozdil).state) {
+          if (diff >= id(plyn_min_rozdil).state) {
             return; // OK, stále topí
           }
           
           // Malý rozdíl přestože prve prošel → akumulátor je natopen,
           // vrátná teplota se vyrovnala výstupní, HA zřejmě zapomněl kotel vypnout
-          float t_out = id(teplota_plynovy_vystup).state;
-          bool vysoka_teplota = !isnan(t_out) && t_out >= id(plyn_min_teplota_vystup).state;
+          bool vysoka_teplota = temp_vystup >= id(plyn_min_teplota_vystup).state;
           const char* typ = vysoka_teplota
             ? "Kotel zastaven - akumulátor natopen"
             : "Kotel zastaven - možné zapomenutí vypnutí";
-          ESP_LOGE("plyn", "HAVÁRIE (minutový check): Δ%.1f°C, výstup %.1f°C - %s", diff, t_out, typ);
+          ESP_LOGE("plyn", "HAVÁRIE (minutový check): Δ%.1f°C, výstup %.1f°C - %s", diff, temp_vystup, typ);
           id(plyn_havarie_aktivni) = true;
           id(plyn_havarie_typ) = typ;
           id(plyn_havarie_cas) = now;
