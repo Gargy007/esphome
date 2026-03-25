@@ -244,11 +244,6 @@ globals:
     restore_value: no
     initial_value: '""'
   
-  - id: error_plynovy_kotel
-    type: std::string
-    restore_value: no
-    initial_value: '""'
-  
   - id: error_voda
     type: std::string
     restore_value: no
@@ -429,11 +424,6 @@ globals:
     type: bool
     restore_value: no
     initial_value: 'false'
-
-  - id: plyn_havarie_reset_cas
-    type: unsigned long
-    restore_value: yes
-    initial_value: '0'
 
 sensor:
   - platform: dallas_temp
@@ -1402,7 +1392,6 @@ interval:
                 id(plyn_havarie_aktivni) = true;
                 id(plyn_havarie_typ) = studeny ? "Kotel netopí - nízká teplota" : "Kotel netopí";
                 id(plyn_havarie_cas) = now;
-                id(error_plynovy_kotel) = id(plyn_havarie_typ);
                 id(switch_plynovy_kotel).turn_off();
               }
             }
@@ -1441,7 +1430,6 @@ interval:
           id(plyn_havarie_aktivni) = true;
           id(plyn_havarie_typ) = typ;
           id(plyn_havarie_cas) = now;
-          id(error_plynovy_kotel) = typ;
           id(switch_plynovy_kotel).turn_off();
 
   # Automatický reset havárie po 24 hodinách
@@ -1458,7 +1446,6 @@ interval:
               id(plyn_havarie_aktivni) = false;
               id(plyn_havarie_typ) = "";
               id(plyn_havarie_cas) = 0;
-              id(error_plynovy_kotel) = "";
             }
           }
 
@@ -1625,7 +1612,6 @@ button:
             id(plyn_havarie_aktivni) = false;
             id(plyn_havarie_cas) = 0;
             id(plyn_havarie_typ) = "";
-            id(error_plynovy_kotel) = "";
           } else {
             ESP_LOGI("plyn", "Žádná havárie k resetu");
           }
