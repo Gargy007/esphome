@@ -1015,7 +1015,7 @@ text_sensor:
   - platform: template
     name: "Voda: Počítáno od:"
     id: voda_pocitano_od
-    update_interval: never
+    update_interval: 1h
     icon: "mdi:calendar"
     entity_category: diagnostic
     lambda: return std::string("26.3.2026");
