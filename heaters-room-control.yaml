@@ -167,6 +167,7 @@ logger:
 
 # Enable Home Assistant API
 api:
+  id: kotelna_api
   encryption:
     key: "9L/bk2VmBAQsr1AOstQ5VefpNbnjGAEziDRPrTKyEBw="
   reboot_timeout: 0s  # Nerebootovat kdyz HA neni dostupne (napr. HA restart)
@@ -176,6 +177,7 @@ ota:
     password: "259251edf6e7e1e27ce716db258d0e94"
 
 wifi:
+  id: kotelna_wifi
   ssid: !secret wifi_ssid
   password: !secret wifi_password
   fast_connect: true
@@ -937,6 +939,8 @@ binary_sensor:
     device_class: problem
     lambda: |-
       return id(kotel_status_havarie).state || 
+             !id(kotelna_wifi).is_connected() ||
+             !id(kotelna_api).is_connected() ||
              id(plyn_havarie_aktivni) || 
              id(voda_havarie_aktivni);
 
@@ -967,6 +971,22 @@ binary_sensor:
     id: voda_status_rele_uzavrena
     entity_category: diagnostic
     lambda: return id(switch_hlavni_ventil).state;
+
+  - platform: template
+    name: "Systém: WiFi connected"
+    id: system_wifi_connected
+    device_class: connectivity
+    entity_category: diagnostic
+    lambda: |-
+      return id(kotelna_wifi).is_connected();
+
+  - platform: template
+    name: "Systém: API connected"
+    id: system_api_connected
+    device_class: connectivity
+    entity_category: diagnostic
+    lambda: |-
+      return id(kotelna_api).is_connected();
 
 text_sensor:
   # --- Stavy (viditelné v HA dashboardu) ---
@@ -1001,6 +1021,14 @@ text_sensor:
       if (id(kotel_status_havarie).state) {
         result += "Kotel: " + id(error_kotel_tuha_paliva);
       }
+      if (!id(kotelna_wifi).is_connected()) {
+        if (!result.empty()) result += " | ";
+        result += "WiFi: odpojeno";
+      }
+      if (!id(kotelna_api).is_connected()) {
+        if (!result.empty()) result += " | ";
+        result += "HA/API: odpojeno";
+      }
       if (id(plyn_havarie_aktivni)) {
         if (!result.empty()) result += " | ";
         result += "Plyn: " + id(plyn_havarie_typ);
@@ -1029,14 +1057,14 @@ interval:
   - interval: 4s
     then:
       - lambda: |-
-          // Stránky 0-3: vždy (PLYN, KOTEL, VODA, KOTEL 2)
-          // Stránky 4-6: havárie (KOTEL, PLYN, VODA) - jen pokud aktivní
-          int next = (id(display_page) + 1) % 7;
+          // Stránky 0-4: vždy (PLYN, KOTEL, VODA, KOTEL 2, SYSTEM)
+          // Stránky 5-7: havárie (KOTEL, PLYN, VODA) - jen pokud aktivní
+          int next = (id(display_page) + 1) % 8;
           // Přeskočit havárie stránky které nejsou aktivní
-          for (int i = 0; i < 7; i++) {
-            if (next == 4 && !id(kotel_status_havarie).state) { next = (next + 1) % 7; continue; }
-            if (next == 5 && !id(plyn_havarie_aktivni))       { next = (next + 1) % 7; continue; }
-            if (next == 6 && !id(voda_havarie_aktivni))       { next = (next + 1) % 7; continue; }
+          for (int i = 0; i < 8; i++) {
+            if (next == 5 && !id(kotel_status_havarie).state) { next = (next + 1) % 8; continue; }
+            if (next == 6 && !id(plyn_havarie_aktivni))       { next = (next + 1) % 8; continue; }
+            if (next == 7 && !id(voda_havarie_aktivni))       { next = (next + 1) % 8; continue; }
             break;
           }
           id(display_page) = next;
@@ -1803,8 +1831,34 @@ display:
         it.printf(126, 36, id(font_small), TextAlign::TOP_RIGHT, "%.0f°C",
                   id(kotel_havarijni_limit).state);
       }
-      // STRÁNKA 4: KOTEL HAVÁRIE
+      // STRÁNKA 4: SYSTEM
       else if (id(display_page) == 4) {
+        const bool wifi_connected = id(kotelna_wifi).is_connected();
+        const bool api_connected = id(kotelna_api).is_connected();
+        it.printf(64, 0, id(font_medium), COLOR_OFF, TextAlign::TOP_CENTER,
+                  (!wifi_connected || !api_connected) ? "!!SYSTEM!!" : "SYSTEM");
+
+        it.printf(2, 16, id(font_small), "WiFi:");
+        it.printf(126, 16, id(font_small), TextAlign::TOP_RIGHT,
+                  wifi_connected ? "CONNECTED" : "ODPOJENO");
+
+        it.printf(2, 26, id(font_small), "API:");
+        it.printf(126, 26, id(font_small), TextAlign::TOP_RIGHT,
+                  api_connected ? "CONNECTED" : "ODPOJENO");
+
+        it.printf(2, 36, id(font_small), "Stav:");
+        it.printf(126, 36, id(font_small), TextAlign::TOP_RIGHT,
+                  (!wifi_connected || !api_connected) ? "HAVARIE" : "OK");
+
+        if (!wifi_connected || !api_connected) {
+          it.printf(2, 46, id(font_small), "Sit/HA chyba");
+        } else {
+          it.printf(2, 46, id(font_small), "Komunikace OK");
+        }
+      }
+
+      // STRÁNKA 5: KOTEL HAVÁRIE
+      else if (id(display_page) == 5) {
         it.printf(64, 0, id(font_medium), COLOR_OFF, TextAlign::TOP_CENTER, "!!KOTEL!!");
 
         // Error text (max 22 znaků)
@@ -1828,8 +1882,8 @@ display:
         it.printf(126, 46, id(font_small), TextAlign::TOP_RIGHT,
                   id(switch_obehove_cerpadlo).state ? "ZAP" : "VYP");
       }
-      // STRÁNKA 5: PLYN HAVÁRIE
-      else if (id(display_page) == 5) {
+      // STRÁNKA 6: PLYN HAVÁRIE
+      else if (id(display_page) == 6) {
         it.printf(64, 0, id(font_medium), COLOR_OFF, TextAlign::TOP_CENTER, "!!PLYN!!");
 
         it.printf(2, 16, id(font_small), "%.22s", id(plyn_havarie_typ).c_str());
@@ -1855,8 +1909,8 @@ display:
           it.printf(126, 46, id(font_small), TextAlign::TOP_RIGHT, "---");
         }
       }
-      // STRÁNKA 6: VODA HAVÁRIE
-      else if (id(display_page) == 6) {
+      // STRÁNKA 7: VODA HAVÁRIE
+      else if (id(display_page) == 7) {
         it.printf(64, 0, id(font_medium), COLOR_OFF, TextAlign::TOP_CENTER, "!!VODA!!");
 
         it.printf(2, 16, id(font_small), "%.22s", id(voda_havarie_typ).c_str());
