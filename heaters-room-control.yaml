@@ -110,10 +110,12 @@
 #
 # STAVY A DIAGNOSTIKA:
 # --------------------
-# - "Kotel - Čerpadlo běží" (binary_sensor)
+# - "Kotel: Relé" (binary_sensor) - fyzický stav relé čerpadla
+# - "Plyn: Relé" (binary_sensor) - fyzický stav relé plynu
+# - "Voda: Relé" (binary_sensor) - fyzický stav relé ventilu vody
 # - "Kotel - Topí (komín)" (binary_sensor)
 # - "Kotel - Havarijní režim" (binary_sensor)
-# - "Kotel - Stav regulace" (text_sensor) - detailní popis stavu
+
 # - "Kotel - Čas od posledního běhu" (sensor v hodinách)
 # - "Error - Kotel na tuhá paliva" (text_sensor) - aktuální chyba
 #
@@ -387,7 +389,7 @@ globals:
 sensor:
   - platform: dallas_temp
     address: 0x3c00000559fe8628
-    name: Teplota - Plynovy kotel> vystup
+    name: "Plynovy kotel: Výstup"
     id: teplota_plynovy_vystup
     update_interval: 10s
     filters:
@@ -395,7 +397,7 @@ sensor:
   
   - platform: dallas_temp
     address: 0x0f00000559c87528
-    name: Teplota - Plynovy kotel> vrat
+    name: "Plynovy kotel: Vrat"
     id: teplota_plynovy_vrat
     update_interval: 10s
     filters:
@@ -403,19 +405,19 @@ sensor:
   
   - platform: dallas_temp
     address: 0xfb000003ea4ce628
-    name: Teplota - Kotel> Vystup
+    name: "Kotel: Výstup"
     id: teplota_kotel_vystup
     update_interval: 10s
   
   - platform: dallas_temp
     address: 0x60000003ea354528
-    name: Teplota - Kotel> vrat
+    name: "Kotel: Vrat"
     id: teplota_kotel_vrat
     update_interval: 10s
   
   # Teplota komína (Termočlánek přes SPI)
   - platform: max6675
-    name: "Teplota - Komín (Termočlánek)"
+    name: "Kotel: Komín"
     id: teplota_komin
     cs_pin: GPIO18
     update_interval: 10s
@@ -476,7 +478,7 @@ sensor:
 
   # Vypočítané rozdíly teplot
   - platform: template
-    name: "Rozdíl teplot - Plynový kotel"
+    name: "Plynovy kotel: Rozdíl teplot"
     id: rozdil_plynovy
     unit_of_measurement: "°C"
     accuracy_decimals: 1
@@ -488,7 +490,7 @@ sensor:
       return id(teplota_plynovy_vystup).state - id(teplota_plynovy_vrat).state;
   
   - platform: template
-    name: "Rozdíl teplot - Kotel na tuhá paliva"
+    name: "Kotel: Rozdíl teplot"
     id: rozdil_kotel
     unit_of_measurement: "°C"
     accuracy_decimals: 1
@@ -501,7 +503,7 @@ sensor:
   
   # Čas od posledního běhu (pro údržbu)
   - platform: template
-    name: "Kotel - Čas od posledního běhu"
+    name: "Kotel: Čas od posledního běhu"
     id: kotel_cas_od_behu
     unit_of_measurement: "h"
     accuracy_decimals: 1
@@ -523,7 +525,7 @@ sensor:
   
   # Voda - zbývající čas pause
   - platform: template
-    name: "Voda - Zbývající čas pause"
+    name: "Voda: Zbývající čas pause"
     id: voda_pause_zbyvajici
     unit_of_measurement: "h"
     accuracy_decimals: 1
@@ -544,7 +546,7 @@ sensor:
 
   # Kalibrace průtokoměru
   - platform: template
-    name: "Kalibrace - Čas měření"
+    name: "Voda: Kal. čas měření"
     id: kalibrace_cas
     unit_of_measurement: "s"
     accuracy_decimals: 1
@@ -559,7 +561,7 @@ sensor:
       return (millis() - id(kalibrace_start_cas)) / 1000.0;
 
   - platform: template
-    name: "Kalibrace - Naměřený průtok"
+    name: "Voda: Kal. naměřený průtok"
     id: kalibrace_namereny_prutok
     unit_of_measurement: "L"
     accuracy_decimals: 3
@@ -574,7 +576,7 @@ sensor:
       return id(celkovy_prutok).state - id(kalibrace_start_prutok);
 
   - platform: template
-    name: "Kalibrace - Aktuální koeficient"
+    name: "Voda: Kal. aktuální koeficient"
     id: kalibrace_aktualni_koef
     unit_of_measurement: ""
     accuracy_decimals: 2
@@ -592,7 +594,7 @@ sensor:
 number:
   # Regulace podle rozdílu teplot
   - platform: template
-    name: "Kotel - Rozdíl ZAP"
+    name: "Kotel: Rozdíl ZAP"
     id: kotel_rozdil_zapnuti
     min_value: 5
     max_value: 30
@@ -617,7 +619,7 @@ number:
             }
 
   - platform: template
-    name: "Kotel - Rozdíl VYP"
+    name: "Kotel: Rozdíl VYP"
     id: kotel_rozdil_vypnuti
     min_value: 0
     max_value: 28
@@ -641,7 +643,7 @@ number:
 
   # Regulace podle teploty komína
   - platform: template
-    name: "Kotel - Komín ZAP"
+    name: "Kotel: Komín ZAP"
     id: kotel_komin_zapnuti
     min_value: 50
     max_value: 200
@@ -655,7 +657,7 @@ number:
     entity_category: config
 
   - platform: template
-    name: "Kotel - Komín VYP"
+    name: "Kotel: Komín VYP"
     id: kotel_komin_vypnuti
     min_value: 30
     max_value: 150
@@ -670,7 +672,7 @@ number:
 
   # Havarijní limit
   - platform: template
-    name: "Kotel - Havarijní limit"
+    name: "Kotel: Havarijní limit"
     id: kotel_havarijni_limit
     min_value: 70
     max_value: 95
@@ -686,7 +688,7 @@ number:
 
   # Voda - max čas průtoku
   - platform: template
-    name: "Voda - Max čas průtoku"
+    name: "Voda: Max čas průtoku"
     id: voda_max_cas_prutoku
     min_value: 5
     max_value: 60
@@ -701,7 +703,7 @@ number:
 
   # Voda - min průtok
   - platform: template
-    name: "Voda - Min průtok pro detekci"
+    name: "Voda: Min průtok pro detekci"
     id: voda_min_prutok
     min_value: 0.1
     max_value: 5.0
@@ -716,7 +718,7 @@ number:
 
   # Voda - délka pause
   - platform: template
-    name: "Voda - Délka pause"
+    name: "Voda: Délka pause"
     id: voda_pause_delka
     min_value: 1
     max_value: 24
@@ -732,7 +734,7 @@ number:
 
   # Plynový kotel - regulační hodnoty
   - platform: template
-    name: "Plyn - Min. rozdíl teplot"
+    name: "Plyn: Min. rozdíl teplot"
     id: plyn_min_rozdil
     min_value: 1
     max_value: 20
@@ -746,7 +748,7 @@ number:
     entity_category: config
 
   - platform: template
-    name: "Plyn - Min. teplota výstupu"
+    name: "Plyn: Min. teplota výstupu"
     id: plyn_min_teplota_vystup
     min_value: 30
     max_value: 60
@@ -761,7 +763,7 @@ number:
 
   # Kalibrace průtokoměru
   - platform: template
-    name: "Kalibrace - Koeficient průtoku"
+    name: "Voda: Kal. koeficient"
     id: kalibrace_koeficient_number
     min_value: 1.0
     max_value: 50.0
@@ -804,7 +806,7 @@ switch:
     name: LED Red
     output: gpio_led_red
     id: switch_led_red
-    # internal: True
+    internal: True
   
   - platform: output
     output: gpio_rele_ventil_voda
@@ -825,7 +827,7 @@ switch:
   
   # Manuální override - ZAPNOUT čerpadlo
   - platform: template
-    name: "Kotel - Manuální ZAP"
+    name: "Kotel: Manuální ZAP"
     id: kotel_manual_on
     icon: "mdi:pump"
     optimistic: true
@@ -841,7 +843,7 @@ switch:
           // Čerpadlo se vypne až když to dovolí podmínky
 
   - platform: template
-    name: "Voda - Vypnout kontrolu"
+    name: "Voda: Vypnout kontrolu"
     id: voda_pause_kontrola
     icon: "mdi:water-off"
     lambda: |-
@@ -898,89 +900,93 @@ switch:
 # ============================================================================
 
 binary_sensor:
+  # --- Havárie (viditelné v HA dashboardu) ---
   - platform: template
-    name: "Kotel - Čerpadlo běží"
-    id: kotel_status_cerpadlo_bezi
-    device_class: running
-    lambda: return id(switch_obehove_cerpadlo).state;
-  
-  - platform: template
-    name: "Kotel - Topí (komín)"
-    id: kotel_status_topi
-    device_class: heat
-    lambda: |-
-      if (isnan(id(teplota_komin).state)) return false;
-      return id(teplota_komin).state > id(kotel_komin_zapnuti).state;
-  
-  - platform: template
-    name: "Kotel - Havarijní režim"
+    name: "Kotel: Havarie"
     id: kotel_status_havarie
     device_class: problem
 
   - platform: template
-    name: "Voda - Havarie"
-    id: voda_havarie_status
-    device_class: safety
-    lambda: |-
-      return id(voda_havarie_aktivni);
-
-  - platform: template
-    name: "Plyn - Havárie"
+    name: "Plyn: Havárie"
     id: plyn_havarie_status
     device_class: problem
     lambda: |-
       return id(plyn_havarie_aktivni);
 
   - platform: template
-    name: "Zařízení - Vše OK"
+    name: "Voda: Havarie"
+    id: voda_havarie_status
+    device_class: safety
+    lambda: |-
+      return id(voda_havarie_aktivni);
+
+  - platform: template
+    name: "Kotelna: Vše OK"
     id: system_all_ok
     device_class: problem
     lambda: |-
-      return !(id(kotel_status_havarie).state || 
-               id(plyn_havarie_aktivni) || 
-               id(voda_havarie_aktivni));
+      return id(kotel_status_havarie).state || 
+             id(plyn_havarie_aktivni) || 
+             id(voda_havarie_aktivni);
+
+  # --- Diagnostika (skrytá v HA, viditelná jen v diagnostickém panelu) ---
+  - platform: template
+    name: "Kotel: Topí (komín)"
+    id: kotel_status_topi
+    device_class: heat
+    entity_category: diagnostic
+    lambda: |-
+      if (isnan(id(teplota_komin).state)) return false;
+      return id(teplota_komin).state > id(kotel_komin_zapnuti).state;
+
+  - platform: template
+    name: "Kotel: Relé"
+    id: kotel_status_cerpadlo_bezi
+    device_class: running
+    entity_category: diagnostic
+    lambda: return id(switch_obehove_cerpadlo).state;
+
+  - platform: template
+    name: "Plyn: Relé"
+    id: plyn_status_rele_bezi
+    device_class: running
+    entity_category: diagnostic
+    lambda: return id(switch_plynovy_kotel).state;
+
+  - platform: template
+    name: "Voda: Relé"
+    id: voda_status_rele_uzavrena
+    device_class: plug
+    entity_category: diagnostic
+    lambda: return id(switch_hlavni_ventil).state;
 
 text_sensor:
+  # --- Stavy (viditelné v HA dashboardu) ---
   - platform: template
-    name: "Kotel - Stav regulace"
-    id: kotel_stav_regulace
-    update_interval: never
-    icon: "mdi:state-machine"
-
-  - platform: template
-    name: "Voda - Stav"
-    id: voda_stav
-    update_interval: never
-    icon: "mdi:water-alert"
-
-  - platform: template
-    name: "Error - Kotel na tuhá paliva"
+    name: "Kotel: Stav"
     id: error_kotel_text
     update_interval: never
     icon: "mdi:alert-circle"
-    entity_category: diagnostic
 
   - platform: template
-    name: "Error - Vodní systém"
-    id: error_voda_text
-    update_interval: never
-    icon: "mdi:alert-circle"
-    entity_category: diagnostic
-    lambda: return id(error_voda);
-
-  - platform: template
-    name: "Plyn - Stav"
+    name: "Plyn: Stav"
     id: plyn_stav
     update_interval: never
     icon: "mdi:gas-burner"
 
   - platform: template
-    name: "Zařízení - Stav"
+    name: "Voda: Stav"
+    id: voda_stav
+    update_interval: never
+    icon: "mdi:water-alert"
+
+  - platform: template
+    name: "Kotelna: Stav"
     id: system_status
     update_interval: 5s
     icon: "mdi:home-alert"
     lambda: |-
-      if (id(system_all_ok).state) {
+      if (!id(system_all_ok).state) {
         return "OK";
       }
       std::string result;
@@ -1022,7 +1028,7 @@ interval:
   - interval: 1s
     then:
       - lambda: |-
-          if (!id(system_all_ok).state) {
+          if (id(system_all_ok).state) {
             id(switch_led_red).turn_on();
           } else {
             id(switch_led_red).turn_off();
@@ -1165,7 +1171,6 @@ interval:
           // 6. PUBLIKOVÁNÍ STAVŮ
           id(error_kotel_tuha_paliva) = havarie ? error_msg : "OK";
           id(kotel_status_havarie).publish_state(havarie);
-          id(kotel_stav_regulace).publish_state(status_text);
           id(error_kotel_text).publish_state(id(error_kotel_tuha_paliva));
       
           // 7. APLIKOVÁNÍ ROZHODNUTÍ
@@ -1204,7 +1209,6 @@ interval:
             ESP_LOGW("kotel", "Čerpadlo neběželo %.1f dní - spouštím 5min testovací běh", days);
             id(kotel_pump_forced_run) = true;
             id(switch_obehove_cerpadlo).turn_on();
-            id(kotel_stav_regulace).publish_state("Testovací běh - údržba");
             id(kotel_forced_run_timer).execute();
           }
 
@@ -1348,7 +1352,7 @@ interval:
                   bool studeny = temp_vystup < id(plyn_min_teplota_vystup).state;
                   ESP_LOGE("plyn", "HAVÁRIE (5min check): Δ%.1f°C, výstup%.1f°C - kotel netopí!", diff, temp_vystup);
                   id(plyn_havarie_aktivni) = true;
-                  id(plyn_havarie_typ) = studeny ? "Kotel netopí - nízká teplota" : "Kotel netopí";
+                  id(plyn_havarie_typ) = studeny ? "Kotel netopí - vůbec nezapnul" : "Kotel netopí";
                   id(plyn_havarie_cas) = now;
                   id(switch_plynovy_kotel).turn_off();
                 }
@@ -1417,6 +1421,8 @@ interval:
               id(plyn_havarie_aktivni) = false;
               id(plyn_havarie_typ) = "";
               id(plyn_havarie_cas) = 0;
+              id(plyn_prvni_check_prosel) = false;
+              ESP_LOGI("plyn", "Reset startovního stavu - příště se provede 5min check");
             }
           }
 
@@ -1491,7 +1497,7 @@ font:
 button:
   # Voda - reset havárie
   - platform: template
-    name: "Voda - Reset havárie"
+    name: "Voda: Reset havárie"
     id: voda_reset_havarie
     icon: "mdi:restart-alert"
     entity_category: diagnostic
@@ -1509,7 +1515,7 @@ button:
   
   # Voda - manuální test ventilu
   - platform: template
-    name: "Voda - Test ventilu"
+    name: "Voda: Test ventilu"
     id: voda_test_manual
     icon: "mdi:valve-closed"
     entity_category: diagnostic
@@ -1530,7 +1536,7 @@ button:
   
   # Kalibrace průtokoměru
   - platform: template
-    name: "Kalibrace - Start"
+    name: "Voda: Kal. start"
     id: kalibrace_start
     icon: "mdi:play"
     entity_category: diagnostic
@@ -1548,7 +1554,7 @@ button:
           ESP_LOGI("kalibrace", "Kalibrace začala - počáteční průtok: %.3f L", id(kalibrace_start_prutok));
           
   - platform: template
-    name: "Kalibrace - Stop"
+    name: "Voda: Kal. stop"
     id: kalibrace_stop
     icon: "mdi:stop"
     entity_category: diagnostic
@@ -1573,7 +1579,7 @@ button:
 
   # Plyn - reset havárie
   - platform: template
-    name: "Plyn - Reset havárie"
+    name: "Plyn: Reset havárie"
     id: plyn_reset_havarie
     icon: "mdi:restart-alert"
     entity_category: diagnostic
@@ -1584,6 +1590,8 @@ button:
             id(plyn_havarie_aktivni) = false;
             id(plyn_havarie_cas) = 0;
             id(plyn_havarie_typ) = "";
+            id(plyn_prvni_check_prosel) = false;
+            ESP_LOGI("plyn", "Reset startovního stavu - příště se provede 5min check");
           } else {
             ESP_LOGI("plyn", "Žádná havárie k resetu");
           }
@@ -1621,7 +1629,7 @@ display:
                   id(switch_plynovy_kotel).state ? "TOPI" : "NETOPI");
       
         // Výstup
-        it.printf(2, 26, id(font_small), "Vystup:");
+        it.printf(2, 26, id(font_small), "Výstup:");
         if (!isnan(id(teplota_plynovy_vystup).state)) {
           it.printf(126, 26, id(font_small), TextAlign::TOP_RIGHT, "%.1f°C", 
                     id(teplota_plynovy_vystup).state);
@@ -1664,7 +1672,7 @@ display:
                 it.printf(126, 26, id(font_small), TextAlign::TOP_RIGHT, "%s", time_str.c_str());
               } else {
                 // Výstup
-                it.printf(2, 26, id(font_small), "Vystup:");
+                it.printf(2, 26, id(font_small), "Výstup:");
                 if (!isnan(id(teplota_kotel_vystup).state)) {
                   it.printf(126, 26, id(font_small), TextAlign::TOP_RIGHT, "%.1f°C", 
                             id(teplota_kotel_vystup).state);
@@ -1765,9 +1773,6 @@ display:
         it.printf(2, 36, id(font_small), "Hav.limit:");
         it.printf(126, 36, id(font_small), TextAlign::TOP_RIGHT, "%.0f°C",
                   id(kotel_havarijni_limit).state);
-
-        // Stav regulace
-        it.printf(2, 46, id(font_small), "%.22s", id(kotel_stav_regulace).state.c_str());
       }
       // STRÁNKA 4: KOTEL HAVÁRIE
       else if (id(display_page) == 4) {
@@ -1776,7 +1781,7 @@ display:
         // Error text (max 22 znaků)
         it.printf(2, 16, id(font_small), "%.22s", id(error_kotel_tuha_paliva).c_str());
 
-        it.printf(2, 26, id(font_small), "Vystup:");
+        it.printf(2, 26, id(font_small), "Výstup:");
         if (!isnan(id(teplota_kotel_vystup).state)) {
           it.printf(126, 26, id(font_small), TextAlign::TOP_RIGHT, "%.1f°C", id(teplota_kotel_vystup).state);
         } else {
@@ -1800,7 +1805,7 @@ display:
 
         it.printf(2, 16, id(font_small), "%.22s", id(plyn_havarie_typ).c_str());
 
-        it.printf(2, 26, id(font_small), "Vystup:");
+        it.printf(2, 26, id(font_small), "Výstup:");
         if (!isnan(id(teplota_plynovy_vystup).state)) {
           it.printf(126, 26, id(font_small), TextAlign::TOP_RIGHT, "%.1f°C", id(teplota_plynovy_vystup).state);
         } else {
