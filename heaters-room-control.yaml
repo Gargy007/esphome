@@ -429,7 +429,7 @@ sensor:
       mode:
         input: true
         pullup: true
-    name: "Aktuální průtok vody"
+    name: "Voda: Aktuální průtok"
     id: prutok_vody
     unit_of_measurement: "L/min"
     timeout: 5s
@@ -437,7 +437,7 @@ sensor:
     filters:
       - lambda: return x / id(kalibrace_koeficient);
     total:
-      name: "Celkový průtok vody"
+      name: "Voda: Celkový průtok"
       id: celkovy_prutok
       unit_of_measurement: "L"
       accuracy_decimals: 3
@@ -942,21 +942,18 @@ binary_sensor:
   - platform: template
     name: "Kotel: Relé"
     id: kotel_status_cerpadlo_bezi
-    device_class: running
     entity_category: diagnostic
     lambda: return id(switch_obehove_cerpadlo).state;
 
   - platform: template
     name: "Plyn: Relé"
     id: plyn_status_rele_bezi
-    device_class: running
     entity_category: diagnostic
     lambda: return id(switch_plynovy_kotel).state;
 
   - platform: template
     name: "Voda: Relé"
     id: voda_status_rele_uzavrena
-    device_class: plug
     entity_category: diagnostic
     lambda: return id(switch_hlavni_ventil).state;
 
