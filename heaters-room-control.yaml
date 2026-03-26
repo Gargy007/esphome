@@ -449,7 +449,7 @@ sensor:
 
   # Voda - hodnoty pro HA (update_interval 5s)
   - platform: template
-    name: "Aktuální průtok vody"
+    name: "Voda: Aktuální průtok"
     id: prutok_vody_ha
     unit_of_measurement: "L/min"
     accuracy_decimals: 2
@@ -459,7 +459,6 @@ sensor:
       return id(prutok_vody).state;
 
   - platform: template
-    name: "Celkový průtok vody"
     id: celkovy_prutok_ha
     unit_of_measurement: "L"
     accuracy_decimals: 2
