@@ -1618,6 +1618,13 @@ button:
             ESP_LOGI("plyn", "Žádná havárie k resetu");
           }
 
+  # Systém - restart desky
+  - platform: restart
+    name: "Kotelna: Restart"
+    id: system_restart
+    icon: "mdi:restart"
+    entity_category: diagnostic
+
 display:
   - platform: ssd1306_i2c
     model: "SH1106 128x64"
