@@ -376,6 +376,12 @@ globals:
     restore_value: no
     initial_value: 'false'
 
+  # HA watchdog - havárie po 5 minutách bez pingu
+  - id: ha_watchdog_5min_timeout_aktivni
+    type: bool
+    restore_value: no
+    initial_value: 'false'
+
   # ============ PLYNOVÝ KOTEL - stavy a monitorování ============
   - id: plyn_povolen
     type: bool
@@ -1006,7 +1012,8 @@ binary_sensor:
              !id(kotelna_wifi).is_connected() ||
              !id(kotelna_api).is_connected() ||
              id(plyn_havarie_aktivni) || 
-             id(voda_havarie_aktivni);
+             id(voda_havarie_aktivni) ||
+             id(ha_watchdog_5min_timeout_aktivni);
 
   # --- Diagnostika (skrytá v HA, viditelná jen v diagnostickém panelu) ---
   - platform: template
@@ -1130,8 +1137,8 @@ text_sensor:
 # ============================================================================
 
 interval:
-  # Střídání stránek displeje každých 4 sekund
-  - interval: 4s
+  # Střídání stránek displeje každých 10 sekund
+  - interval: 10s
     then:
       - lambda: |-
           // Stránky 0-4: vždy (PLYN, KOTEL, VODA, KOTEL 2, SYSTEM)
@@ -1210,6 +1217,30 @@ interval:
           id(plyn_stav).publish_state("Watchdog timeout - restart");
           delay(500);
           App.safe_reboot();
+
+  # HA watchdog - havárie po 5 minutách bez pingu (před restartem)
+  - interval: 30s
+    then:
+      - lambda: |-
+          const unsigned long WATCHDOG_5MIN_MS = 5UL * 60UL * 1000UL;
+          if (!id(ha_watchdog_aktivni) || id(ha_watchdog_posledni_ping) == 0) {
+            return;
+          }
+
+          unsigned long now = millis();
+          unsigned long elapsed = (now >= id(ha_watchdog_posledni_ping))
+            ? (now - id(ha_watchdog_posledni_ping))
+            : now;
+
+          if (elapsed >= WATCHDOG_5MIN_MS && !id(ha_watchdog_5min_timeout_aktivni)) {
+            ESP_LOGE("system", "HA watchdog 5min timeout: %.1f min bez pingu - warning!", elapsed / 60000.0);
+            id(ha_watchdog_5min_timeout_aktivni) = true;
+            id(switch_led_red).turn_off();  // Rozsvítit error LED (inverted) - jen warning!
+          } else if (elapsed < WATCHDOG_5MIN_MS && id(ha_watchdog_5min_timeout_aktivni)) {
+            // Reset havárie když ping znovu přijde
+            id(ha_watchdog_5min_timeout_aktivni) = false;
+            id(switch_led_red).turn_on();
+          }
   # Hlavní regulační logika kotel - každých 10 sekund
   - interval: 10s
     then:
@@ -1962,8 +1993,9 @@ display:
       else if (id(display_page) == 4) {
         const bool wifi_connected = id(kotelna_wifi).is_connected();
         const bool api_connected = id(kotelna_api).is_connected();
+        const bool watchdog_ok = !id(ha_watchdog_5min_timeout_aktivni);
         it.printf(64, 0, id(font_medium), COLOR_OFF, TextAlign::TOP_CENTER,
-                  (!wifi_connected || !api_connected) ? "!!SYSTEM!!" : "SYSTEM");
+                  (!wifi_connected || !api_connected || !watchdog_ok) ? "!!SYSTEM!!" : "SYSTEM");
 
         it.printf(2, 16, id(font_small), "WiFi:");
         it.printf(126, 16, id(font_small), TextAlign::TOP_RIGHT,
@@ -1973,14 +2005,19 @@ display:
         it.printf(126, 26, id(font_small), TextAlign::TOP_RIGHT,
                   api_connected ? "CONNECTED" : "ODPOJENO");
 
-        it.printf(2, 36, id(font_small), "Stav:");
-        it.printf(126, 36, id(font_small), TextAlign::TOP_RIGHT,
-                  (!wifi_connected || !api_connected) ? "HAVARIE" : "OK");
+        it.printf(2, 36, id(font_small), "Watchdog:");
+        if (!isnan(id(ha_watchdog_bez_pingu).state)) {
+          it.printf(126, 36, id(font_small), TextAlign::TOP_RIGHT, "%.1f min", id(ha_watchdog_bez_pingu).state);
+        } else {
+          it.printf(126, 36, id(font_small), TextAlign::TOP_RIGHT, "OK");
+        }
 
-        if (!wifi_connected || !api_connected) {
+        if (!watchdog_ok) {
+          it.printf(2, 46, id(font_small), "WATCHDOG TIMEOUT!");
+        } else if (!wifi_connected || !api_connected) {
           it.printf(2, 46, id(font_small), "Sit/HA chyba");
         } else {
-          it.printf(2, 46, id(font_small), "Komunikace OK");
+          it.printf(2, 46, id(font_small), "Vše OK");
         }
       }
 
