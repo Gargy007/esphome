@@ -170,7 +170,13 @@ api:
   id: kotelna_api
   encryption:
     key: "9L/bk2VmBAQsr1AOstQ5VefpNbnjGAEziDRPrTKyEBw="
-  reboot_timeout: 0s  # Nerebootovat kdyz HA neni dostupne (napr. HA restart)
+  reboot_timeout: 5min  # Max. 5 minut bez Home Assistant API, potom restart
+  actions:
+    - action: ha_watchdog_ping
+      then:
+        - lambda: |-
+            id(ha_watchdog_posledni_ping) = millis();
+            id(ha_watchdog_aktivni) = true;
 
 ota:
   - platform: esphome
@@ -180,8 +186,8 @@ wifi:
   id: kotelna_wifi
   ssid: !secret wifi_ssid
   password: !secret wifi_password
-  fast_connect: true
   power_save_mode: none
+  reboot_timeout: 5min  # Max. 5 minut bez WiFi, potom restart
   manual_ip:
     static_ip: 192.168.1.113
     gateway: 192.168.1.1
@@ -189,8 +195,10 @@ wifi:
   ap:
     ssid: "Boiler-Room-Heaters_v2"
     password: "tMUQtkVnJjVW"
+  
 
 captive_portal:
+
 
 # --- SBĚRNICE (podle schématu) ---
 i2c:
@@ -206,27 +214,6 @@ spi:
 one_wire:
   - platform: gpio
     pin: GPIO17 # Pin označený jako D5/DS18B20
-
-time:
-  - platform: homeassistant
-    id: homeassistant_time
-    on_time:
-      - hours: 2
-        minutes: 0
-        seconds: 0
-        days_of_week: [1]
-        then:
-          - lambda: |-
-              if (id(voda_test_probiha)) {
-                ESP_LOGW("voda", "Týdenní test již probíhá, přeskočeno");
-                return;
-              }
-              if (id(voda_havarie_aktivni)) {
-                ESP_LOGW("voda", "Týdenní test zrušen, aktivní havárie");
-                return;
-              }
-              ESP_LOGI("voda", "Spouštím týdenní test ventilu (pondělí 2:00)");
-              id(voda_test_script).execute();
 
 
 # 0x3c00000559fe8628 (DS18B20) OK - Plynovy kotel vystup
@@ -315,6 +302,18 @@ globals:
     restore_value: no
     initial_value: 'false'
 
+  # Čas posledního týdenního testu (millis) - pro odpočet 7 dní bez závislosti na HA čase
+  - id: voda_test_posledni
+    type: unsigned long
+    restore_value: yes
+    initial_value: '0'
+
+  # Kdy naposledy klesl průtok pod min. práh (millis) - pro podmínku 30 min klidu
+  - id: voda_bez_prutoku_od
+    type: unsigned long
+    restore_value: no
+    initial_value: '0'
+
   - id: display_page
     type: int
     restore_value: no
@@ -366,6 +365,17 @@ globals:
     restore_value: no
     initial_value: '0'
 
+  # HA watchdog - periodický ping z Home Assistantu pro detekci zaseklé logiky
+  - id: ha_watchdog_posledni_ping
+    type: unsigned long
+    restore_value: no
+    initial_value: '0'
+
+  - id: ha_watchdog_aktivni
+    type: bool
+    restore_value: no
+    initial_value: 'false'
+
   # ============ PLYNOVÝ KOTEL - stavy a monitorování ============
   - id: plyn_povolen
     type: bool
@@ -398,6 +408,14 @@ globals:
     initial_value: 'false'
 
 sensor:
+  # WiFi signál
+  - platform: wifi_signal
+    name: "WiFi: RSSI"
+    id: wifi_rssi
+    update_interval: 15s
+    unit_of_measurement: "dBm"
+    entity_category: diagnostic
+  
   - platform: dallas_temp
     address: 0x3c00000559fe8628
     name: "Plynovy kotel: Výstup"
@@ -419,12 +437,14 @@ sensor:
     name: "Kotel: Výstup"
     id: teplota_kotel_vystup
     update_interval: 10s
+    # internal: true
   
   - platform: dallas_temp
     address: 0x60000003ea354528
     name: "Kotel: Vrat"
     id: teplota_kotel_vrat
     update_interval: 10s
+    # internal: true
   
   # Teplota komína (Termočlánek přes SPI)
   - platform: max6675
@@ -432,6 +452,7 @@ sensor:
     id: teplota_komin
     cs_pin: GPIO18
     update_interval: 10s
+    # internal: true
 
   # Průtokoměr - KALIBROVATELNÝ
   - platform: pulse_meter
@@ -468,6 +489,7 @@ sensor:
     accuracy_decimals: 2
     update_interval: 5s
     icon: "mdi:water"
+    # internal: true
     lambda: |-
       return id(prutok_vody).state;
 
@@ -478,6 +500,7 @@ sensor:
     accuracy_decimals: 2
     update_interval: 5s
     icon: "mdi:counter"
+    # internal: true
     lambda: |-
       float raw_total = id(celkovy_prutok).state;
       if (isnan(raw_total)) {
@@ -508,6 +531,7 @@ sensor:
     unit_of_measurement: "°C"
     accuracy_decimals: 1
     update_interval: 10s
+    # internal: true
     lambda: |-
       if (isnan(id(teplota_kotel_vystup).state) || isnan(id(teplota_kotel_vrat).state)) {
         return {};
@@ -535,6 +559,7 @@ sensor:
       }
       
       return time_diff / (1000.0 * 60.0 * 60.0); // převod na hodiny
+    internal: true
   
   # Voda - zbývající čas pause
   - platform: template
@@ -556,6 +581,7 @@ sensor:
       float zbyvajici = delka_h - uplynulo_h;
       
       return zbyvajici > 0 ? zbyvajici : 0.0;
+    internal: true
 
   # Kalibrace průtokoměru
   - platform: template
@@ -572,6 +598,7 @@ sensor:
         return 0.0;
       }
       return (millis() - id(kalibrace_start_cas)) / 1000.0;
+    internal: true
 
   - platform: template
     name: "Voda: Kal. naměřený průtok"
@@ -587,6 +614,7 @@ sensor:
         return 0.0;
       }
       return id(celkovy_prutok).state - id(kalibrace_start_prutok);
+    internal: true
 
   - platform: template
     name: "Voda: Kal. aktuální koeficient"
@@ -599,7 +627,26 @@ sensor:
     disabled_by_default: true
     lambda: |-
       return id(kalibrace_koeficient);
+    # internal: true
 
+  - platform: template
+    name: "Systém: Watchdog bez pingu"
+    id: ha_watchdog_bez_pingu
+    unit_of_measurement: "min"
+    accuracy_decimals: 1
+    update_interval: 30s
+    icon: "mdi:timer-alert"
+    entity_category: diagnostic
+    lambda: |-
+      if (!id(ha_watchdog_aktivni) || id(ha_watchdog_posledni_ping) == 0) {
+        return 0.0;
+      }
+      unsigned long now = millis();
+      unsigned long elapsed = (now >= id(ha_watchdog_posledni_ping))
+        ? (now - id(ha_watchdog_posledni_ping))
+        : now;
+      return elapsed / 60000.0;
+    internal: true
 
 # ============================================================================
 # NASTAVENÍ (ovladatelné z Home Assistant)
@@ -619,6 +666,7 @@ number:
     mode: box
     icon: "mdi:thermometer-chevron-up"
     entity_category: config
+    # internal: true
     on_value:
       then:
         - lambda: |-
@@ -644,6 +692,7 @@ number:
     mode: box
     icon: "mdi:thermometer-chevron-down"
     entity_category: config
+    # internal: true
     on_value:
       then:
         - lambda: |-
@@ -668,6 +717,7 @@ number:
     mode: box
     icon: "mdi:fire"
     entity_category: config
+    # internal: true
 
   - platform: template
     name: "Kotel: Komín VYP"
@@ -682,6 +732,7 @@ number:
     mode: box
     icon: "mdi:fire-off"
     entity_category: config
+    # internal: true
 
   # Havarijní limit
   - platform: template
@@ -692,12 +743,12 @@ number:
     step: 1
     initial_value: 85
     optimistic: true
-
     restore_value: true
     unit_of_measurement: "°C"
     mode: box
     icon: "mdi:alert-octagon"
     entity_category: config
+    # internal: true
 
   # Voda - max čas průtoku
   - platform: template
@@ -713,6 +764,7 @@ number:
     mode: box
     icon: "mdi:timer-alert-outline"
     entity_category: config
+    # internal: true
 
   # Voda - min průtok
   - platform: template
@@ -728,6 +780,7 @@ number:
     mode: box
     icon: "mdi:water-outline"
     entity_category: config
+    # internal: true
 
   # Voda - délka pause
   - platform: template
@@ -744,6 +797,7 @@ number:
     icon: "mdi:timer-pause-outline"
     entity_category: config
     disabled_by_default: true  # <-- SKRYTO
+    internal: true
 
   # Plynový kotel - regulační hodnoty
   - platform: template
@@ -759,6 +813,7 @@ number:
     mode: box
     icon: "mdi:thermometer-lines"
     entity_category: config
+    # internal: true
 
   - platform: template
     name: "Plyn: Min. teplota výstupu"
@@ -772,7 +827,7 @@ number:
     unit_of_measurement: "°C"
     mode: box
     icon: "mdi:thermometer-low"
-    entity_category: config
+    # entity_category: config
 
   # Kalibrace průtokoměru
   - platform: template
@@ -794,6 +849,8 @@ number:
         - lambda: |-
             id(kalibrace_koeficient) = x;
             ESP_LOGI("kalibrace", "Nový kalibrační koeficient: %.2f imp/L", x);
+    # internal: true
+
 output:
   - platform: gpio
     pin: GPIO0
@@ -809,6 +866,7 @@ output:
       number: GPIO21
       inverted: true
     id: gpio_led_red
+  
 
 # ============================================================================
 # OVLÁDÁNÍ
@@ -837,6 +895,7 @@ switch:
     name: "Spínání plynového kotle"
     id: switch_plynovy_kotel
     internal: true
+    
   
   # Manuální override - ZAPNOUT čerpadlo
   - platform: template
@@ -844,6 +903,7 @@ switch:
     id: kotel_manual_on
     icon: "mdi:pump"
     optimistic: true
+    # internal: true
     turn_on_action:
       - lambda: |-
           ESP_LOGI("kotel", "Manuální ZAP čerpadla");
@@ -859,6 +919,7 @@ switch:
     name: "Voda: Vypnout kontrolu"
     id: voda_pause_kontrola
     icon: "mdi:water-off"
+    # internal: true
     lambda: |-
       return id(voda_pause_aktivni);
     turn_on_action:
@@ -918,11 +979,13 @@ binary_sensor:
     name: "Kotel: Havarie"
     id: kotel_status_havarie
     device_class: problem
+    # internal: true
 
   - platform: template
     name: "Plyn: Havárie"
     id: plyn_havarie_status
     device_class: problem
+    
     lambda: |-
       return id(plyn_havarie_aktivni);
 
@@ -930,6 +993,7 @@ binary_sensor:
     name: "Voda: Havarie"
     id: voda_havarie_status
     device_class: safety
+    # internal: true
     lambda: |-
       return id(voda_havarie_aktivni);
 
@@ -950,6 +1014,7 @@ binary_sensor:
     id: kotel_status_topi
     device_class: heat
     entity_category: diagnostic
+    internal: true
     lambda: |-
       if (isnan(id(teplota_komin).state)) return false;
       return id(teplota_komin).state > id(kotel_komin_zapnuti).state;
@@ -958,18 +1023,22 @@ binary_sensor:
     name: "Kotel: Relé"
     id: kotel_status_cerpadlo_bezi
     entity_category: diagnostic
+    # internal: true
     lambda: return id(switch_obehove_cerpadlo).state;
 
   - platform: template
     name: "Plyn: Relé"
     id: plyn_status_rele_bezi
     entity_category: diagnostic
+    # internal: true
     lambda: return id(switch_plynovy_kotel).state;
+    internal: true
 
   - platform: template
     name: "Voda: Relé"
     id: voda_status_rele_uzavrena
     entity_category: diagnostic
+    # internal: true
     lambda: return id(switch_hlavni_ventil).state;
 
   - platform: template
@@ -977,16 +1046,20 @@ binary_sensor:
     id: system_wifi_connected
     device_class: connectivity
     entity_category: diagnostic
+    
     lambda: |-
       return id(kotelna_wifi).is_connected();
+    internal: true
 
   - platform: template
     name: "Systém: API connected"
     id: system_api_connected
     device_class: connectivity
     entity_category: diagnostic
+    
     lambda: |-
       return id(kotelna_api).is_connected();
+    internal: true
 
 text_sensor:
   # --- Stavy (viditelné v HA dashboardu) ---
@@ -995,18 +1068,21 @@ text_sensor:
     id: error_kotel_text
     update_interval: never
     icon: "mdi:alert-circle"
+    # internal: true
 
   - platform: template
     name: "Plyn: Stav"
     id: plyn_stav
     update_interval: never
     icon: "mdi:gas-burner"
+    
 
   - platform: template
     name: "Voda: Stav"
     id: voda_stav
     update_interval: never
     icon: "mdi:water-alert"
+    # internal: true
 
   - platform: template
     name: "Kotelna: Stav"
@@ -1046,6 +1122,7 @@ text_sensor:
     update_interval: 1h
     icon: "mdi:calendar"
     entity_category: diagnostic
+    # internal: true
     lambda: return std::string("26.3.2026");
 
 # ============================================================================
@@ -1108,6 +1185,31 @@ interval:
             id(voda_celkovy_prutok_snapshot) = raw_total;
             id(voda_celkovy_prutok_posledni_ulozeni) = now;
           }
+
+  # HA watchdog - pokud HA neposle ping do 10 minut, proved fail-safe a restart
+  - interval: 30s
+    then:
+      - lambda: |-
+          const unsigned long WATCHDOG_TIMEOUT_MS = 10UL * 60UL * 1000UL;
+          if (!id(ha_watchdog_aktivni) || id(ha_watchdog_posledni_ping) == 0) {
+            return;
+          }
+
+          unsigned long now = millis();
+          unsigned long elapsed = (now >= id(ha_watchdog_posledni_ping))
+            ? (now - id(ha_watchdog_posledni_ping))
+            : now;
+
+          if (elapsed < WATCHDOG_TIMEOUT_MS) {
+            return;
+          }
+
+          ESP_LOGE("system", "HA watchdog timeout: %.1f min bez pingu - provadim fail-safe restart", elapsed / 60000.0);
+          id(plyn_povolen) = false;
+          id(switch_plynovy_kotel).turn_off();
+          id(plyn_stav).publish_state("Watchdog timeout - restart");
+          delay(500);
+          App.safe_reboot();
   # Hlavní regulační logika kotel - každých 10 sekund
   - interval: 10s
     then:
@@ -1278,6 +1380,14 @@ interval:
           bool has_flow = !isnan(flow) && flow >= id(voda_min_prutok).state;
           bool valve_open = !id(switch_hlavni_ventil).state;
 
+          // --- sledování doby bez průtoku (pro podmínku 30 min klidu před týdenním testem) ---
+          if (has_flow || id(switch_hlavni_ventil).state) {
+            // Teče voda NEBO ventil zavřen (test/havárie) → resetujeme počítadlo
+            id(voda_bez_prutoku_od) = 0;
+          } else if (id(voda_bez_prutoku_od) == 0) {
+            id(voda_bez_prutoku_od) = now;
+          }
+
           // --- týdenní test ventilů ---
           if (id(voda_test_probiha)) {
             if (id(voda_test_phase) == 1) {
@@ -1308,6 +1418,7 @@ interval:
               }
             } else if (id(voda_test_phase) == 3) {
               if (now - id(voda_test_phase_start) >= 2000UL) {
+                id(voda_test_posledni) = now;  // zaznamenat čas dokončení pro odpočet 7 dní
                 id(switch_hlavni_ventil).turn_off();
                 id(voda_test_probiha) = false;
                 id(voda_test_phase) = 0;
@@ -1319,6 +1430,22 @@ interval:
                 }
                 ESP_LOGI("voda", "Test ventil fáze 3 dokončen");
               }
+            }
+          }
+
+          // --- automatické spuštění týdenního testu (7 dní + 30 min bez průtoku) ---
+          if (!id(voda_test_probiha) && !id(voda_havarie_aktivni) && !id(voda_pause_aktivni)) {
+            const unsigned long WEEK_MS  = 7UL * 24UL * 60UL * 60UL * 1000UL;
+            const unsigned long MIN30_MS = 30UL * 60UL * 1000UL;
+            unsigned long last_test = id(voda_test_posledni);
+            // Ochrana proti přetečení millis() po rebootu: pokud now < last_test, použijeme now
+            unsigned long elapsed = (now >= last_test) ? (now - last_test) : now;
+            bool no_flow_long = (id(voda_bez_prutoku_od) > 0) &&
+                                 ((now - id(voda_bez_prutoku_od)) >= MIN30_MS);
+            if (elapsed >= WEEK_MS && no_flow_long) {
+              ESP_LOGI("voda", "Spoustim tydenni test ventilu (%.1f dni od posledniho, 30min bez prutoku)",
+                       elapsed / (24.0 * 60.0 * 60.0 * 1000.0));
+              id(voda_test_script).execute();
             }
           }
 
