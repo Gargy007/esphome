@@ -474,6 +474,13 @@ sensor:
     internal: true
     filters:
       - lambda: return x / id(kalibrace_koeficient);
+      - lambda: |-
+          // Filtr proti nesmyslným hodnotám (peak po restartu, max 300 L/min)
+          if (x > 300.0f) {
+            ESP_LOGW("voda", "Filtrován nesmyslný peak fyzického průtoku: %.1f L/min", x);
+            return {};
+          }
+          return x;
     total:
       name: "Voda: Celkový průtok"
       id: celkovy_prutok
