@@ -1,3 +1,87 @@
+# ╔══════════════════════════════════════════════════════════════════════════╗
+# ║          NeoPool / VistaPool – ESPHome Modbus RTU Device                 ║
+# ╠══════════════════════════════════════════════════════════════════════════╣
+# ║  Zařízení:  M5Stack ATOM Lite (ESP32)                                    ║
+# ║  Protokol: Modbus RTU přes RS-485 (19200 baud, 8N1)                      ║
+# ║  Slave ID:  1 (výchozí pro NeoPool/Sugar Valley zařízení)                ║
+# ║  Aktualizace: každých 30 s                                               ║
+# ╠══════════════════════════════════════════════════════════════════════════╣
+# ║  SENZORY (read-only)                                                     ║
+# ╠════════════════════════════╦═════════════╦═══════════════════════════════╣
+# ║  Název                     ║  Reg (hex)  ║  Poznámka                     ║
+# ╠════════════════════════════╬═════════════╬═══════════════════════════════╣
+# ║  Ionization Level          ║  0x0100     ║  % (jen při ionizačním modulu)║
+# ║  Hydrolysis Intensity      ║  0x0101     ║  % (÷10)                      ║
+# ║  pH Level                  ║  0x0102     ║  pH (÷100)                    ║
+# ║  Redox Potential           ║  0x0103     ║  mV                           ║
+# ║  Chlorine Level            ║  0x0104     ║  ppm (÷100)                   ║
+# ║  Conductivity              ║  0x0105     ║  %                            ║
+# ║  Water Temperature         ║  0x0106     ║  °C (÷10)                     ║
+# ║  Hydrolysis Cell Voltage   ║  0x0111     ║  V (÷10, diagnostic)          ║
+# ║  Filtration Mode (text)    ║  0x0411     ║  Manual/Auto/Heating/Smart/…  ║
+# ║  pH Alarm (text)           ║  0x000F     ║  popis alarmu pH čerpadla     ║
+# ║  Redox Status (text)       ║  0x0108     ║  stav Redox modulu            ║
+# ╠════════════════════════════╩═════════════╩═══════════════════════════════╣
+# ║  BINÁRNÍ SENZORY (stav relay/modulů)                                     ║
+# ╠════════════════════════════╦═════════════╦═══════════════════════════════╣
+# ║  Filtration Pump           ║  0x010E b1  ║  čerpadlo filtrации běží      ║
+# ║  pH Pump Running           ║  0x010E b0  ║  pH dávkovací čerpadlo        ║
+# ║  Pool Light State          ║  0x010E b2  ║  svítidlo (adj. dle GPIO)     ║
+# ║  AUX1–AUX4 State           ║  0x010E b3–6║  stav AUX relé                ║
+# ║  pH OK / Control / Pump    ║  0x0107     ║  bity stavu pH modulu         ║
+# ║  Hydrolysis On Target      ║  0x010D b0  ║  elektrolýza na setpointu     ║
+# ║  Hydrolysis Low Flow       ║  0x010D b1  ║  problém průtoku (alarm)      ║
+# ║  Hydrolysis Module Active  ║  0x010D b9  ║  modul elektrolýzy aktivní    ║
+# ╠════════════════════════════╩═════════════╩═══════════════════════════════╣
+# ║  OVLÁDÁNÍ / AKTUÁTORY                                                    ║
+# ╠════════════════════════════╦═════════════╦═══════════════════════════════╣
+# ║  Manual Filtration (switch)║  0x0413     ║  ZAP/VYP filtrace v ruč. módu ║
+# ║  AUX1–AUX4 (switch)        ║  0x010E     ║  přím. ovl. AUX relé (EXEC)   ║
+# ║  Pool Light (switch)       ║  0x0470     ║  světlo přes timer blok       ║
+# ║  Filtration Mode (select)  ║  0x0411     ║  Manual/Auto/Heating/…        ║
+# ║  Hydrolysis Target (number)║  0x0502     ║  0–100 % výkonu elektrolýzy   ║
+# ║  pH Upper/Lower (number)   ║  0x0504/05  ║  pH 5.0–9.0 (setpointy)       ║
+# ║  Redox Setpoint (number)   ║  0x0508     ║  0–1000 mV                    ║
+# ║  Chlorine Setpoint (number)║  0x050A     ║  0–10 ppm                     ║
+# ╠════════════════════════════╩═════════════╩═══════════════════════════════╣
+# ║  TLAČÍTKA                                                                ║
+# ╠════════════════════════════╦═════════════╦═══════════════════════════════╣
+# ║  Save Settings             ║  0x02F0+F5  ║  uloží setpointy do EEPROM    ║
+# ║  Clear Errors              ║  0x02F5     ║  resetuje chybové stavy       ║
+# ╠════════════════════════════╩═════════════╩═══════════════════════════════╣
+# ║  POSTUP POUŽITÍ                                                          ║
+# ╠══════════════════════════════════════════════════════════════════════════╣
+# ║  1. Filtrace v ručním módu:                                              ║
+# ║     a) Nastavit "Filtration Mode" na "Manual"                            ║
+# ║     b) Přepnout "Manual Filtration" na ON/OFF                            ║
+# ║                                                                          ║
+# ║  2. Automatická filtrace (timer):                                        ║
+# ║     a) Nastavit "Filtration Mode" na "Auto" – filtrace běží dle timerů   ║
+# ║        nakonfigurovaných přímo v NeoPool zařízení                        ║
+# ║                                                                          ║
+# ║  3. Změna setpointů (pH, Redox, Chlor, Výkon elektrolýzy):               ║
+# ║     a) Upravit hodnotu v příslušném Number entity                        ║
+# ║     b) Stisknout tlačítko "Save Settings"                                ║
+# ║        → zapíše do EEPROM (0x02F0=1) a aplikuje (0x02F5=1)               ║
+# ║        → bez Save Settings se hodnoty ztratí po restartu zařízení        ║
+# ║                                                                          ║
+# ║  4. Ovládání AUX relé / Pool Light:                                      ║
+# ║     a) Přepnout příslušný switch                                         ║
+# ║     b) Zápis probíhá sekvencí: unlock→hodnota→clear 0x0289→EXEC          ║
+# ║        (Mirror HA integrace async_write_aux_relay)                       ║
+# ║                                                                          ║
+# ║  5. Reset alarmů:                                                        ║
+# ║     a) Stisknout "Clear Errors" – odešle EXEC (0x02F5)                   ║
+# ║                                                                          ║
+# ║  POZNÁMKY:                                                               ║
+# ║  • Bity relay v 0x010E závisí na konfiguraci GPIO v NeoPool zařízení.    ║
+# ║    Relay 1=pH, Relay 2=filtrace je výchozí – zkontroluj pomocí           ║
+# ║    MBF_PAR_FILT_GPIO (0x0412) a MBF_PAR_LIGHTING_GPIO (0x0410).          ║
+# ║  • AUX bitmasks: AUX1=0x0008, AUX2=0x0010, AUX3=0x0020, AUX4=0x0040      ║
+# ║  • Senzory 0x0100–0x0111 jsou input registry (FC04), ale většina         ║
+# ║    NeoPool zařízení odpovídá i na FC03 (holding) – používáme FC03.       ║
+# ╚══════════════════════════════════════════════════════════════════════════╝
+
 esphome:
   name: tcp-modbus-pool
   friendly_name: TCP MODBUS POOL
@@ -7,10 +91,8 @@ esp32:
   framework:
     type: arduino
 
-# Enable logging
 logger:
 
-# Enable Home Assistant API
 api:
   encryption:
     key: "KDJ+oVCHHmzYpj3yQW+cN4bksgZ44W/JFEU+9s4EcPQ="
@@ -22,351 +104,592 @@ ota:
 wifi:
   ssid: !secret wifi_ssid
   password: !secret wifi_password
-
-  # Optional manual IP
   manual_ip:
     static_ip: 192.168.1.120
     gateway: 192.168.1.1
     subnet: 255.255.255.0
-
-  # Enable fallback hotspot (captive portal) in case wifi connection fails
   ap:
     ssid: "Tcp-Modbus-Pool Fallback Hotspot"
     password: "T0b8zxGCqYzE"
 
 captive_portal:
-    
+
+# ─── UART & MODBUS ────────────────────────────────────────────────────────
 uart:
-  - id: modbus_server
+  - id: modbus_uart
     tx_pin: 26
     rx_pin: 32
     baud_rate: 19200
+    parity: NONE
+    stop_bits: 1
 
 modbus:
-  - uart_id: modbus_server
+  - uart_id: modbus_uart
     id: neopool_modbus
     send_wait_time: 300ms
-    
 
-
-# Modbus TCP connection to NeoPool system
 modbus_controller:
-  - id: neopool_modbus_controller
+  - id: neopool
     modbus_id: neopool_modbus
     address: 1
-    
-# MEASURE page sensors (0x0100)
+    update_interval: 30s
+    command_throttle: 50ms
+    offline_skip_updates: 3
+
+# ─── SENSORS ─────────────────────────────────────────────────────────────
 sensor:
-  - platform: wifi_signal # Reports the WiFi signal strength/RSSI in dB
+  # ── WiFi diagnostic ──────────────────────────────────────────────────────
+  - platform: wifi_signal
     name: "WiFi Signal dB"
     id: wifi_signal_db
-    update_interval: 10s
-    entity_category: "diagnostic"
+    update_interval: 60s
+    entity_category: diagnostic
 
-  - platform: copy # Reports the WiFi signal strength in %
+  - platform: copy
     source_id: wifi_signal_db
     name: "WiFi Signal Percent"
     filters:
       - lambda: return min(max(2 * (x + 100.0), 0.0), 100.0);
-    unit_of_measurement: "Signal %"
-    entity_category: "diagnostic"
+    unit_of_measurement: "%"
+    entity_category: diagnostic
     device_class: ""
-    
-  # Hydrolysis current
-  - id: hydro_current
+
+  # ── MEASUREMENT PAGE (input registers 0x0100–0x0111) ────────────────────
+  # The HA integration reads these via FC04 (read_input_registers). Using
+  # register_type: holding (FC03) also works on most NeoPool/Sugar Valley devices.
+
+  - id: ion_current
     platform: modbus_controller
-    name: "Hydrolysis Current"
+    name: "Ionization Level"
+    address: 0x0100
+    register_type: holding
+    state_class: measurement
+    unit_of_measurement: "%"
+    accuracy_decimals: 0
+    icon: mdi:atom
+
+  - id: hidro_current
+    platform: modbus_controller
+    name: "Hydrolysis Intensity"
     address: 0x0101
     register_type: holding
-    unit_of_measurement: "A"
-    accuracy_decimals: 2
-  
-  # pH measurement
+    state_class: measurement
+    unit_of_measurement: "%"
+    accuracy_decimals: 1
+    filters:
+      - lambda: return x / 10.0;
+    icon: mdi:air-humidifier
+
   - id: measure_ph
     platform: modbus_controller
-    name: "PH Level"
+    name: "pH Level"
     address: 0x0102
     register_type: holding
-    device_class: "ph"
+    device_class: ph
+    state_class: measurement
     unit_of_measurement: "pH"
     accuracy_decimals: 2
     filters:
-      - lambda: return x / 100.0; # Convert from hundredths    
-  
-  # Redox measurement
+      - lambda: return x / 100.0;
+    icon: mdi:ph
+
   - id: measure_rx
     platform: modbus_controller
-    name: "Redox Level"
+    name: "Redox Potential"
     address: 0x0103
     register_type: holding
+    state_class: measurement
     unit_of_measurement: "mV"
+    accuracy_decimals: 0
+    icon: mdi:gradient-vertical
+
+  - id: measure_cl
+    platform: modbus_controller
+    name: "Chlorine Level"
+    address: 0x0104
+    register_type: holding
+    state_class: measurement
+    unit_of_measurement: "ppm"
     accuracy_decimals: 2
-  
-  # Water temperature sensor
+    filters:
+      - lambda: return x / 100.0;
+    icon: mdi:shaker-outline
+
+  - id: measure_conductivity
+    platform: modbus_controller
+    name: "Conductivity"
+    address: 0x0105
+    register_type: holding
+    state_class: measurement
+    unit_of_measurement: "%"
+    accuracy_decimals: 0
+
   - id: measure_temperature
     platform: modbus_controller
     name: "Water Temperature"
     address: 0x0106
     register_type: holding
+    device_class: temperature
+    state_class: measurement
     unit_of_measurement: "°C"
-    device_class: "temperature"
     accuracy_decimals: 1
     filters:
-      - lambda: return x / 10.0; # Convert from tenths (100 = 10.0°C)
-      
-  # pH Status Register
-  - id: ph_status
-    platform: modbus_controller
-    name: "PH Status Raw"
-    address: 0x0107
-    register_type: holding
-    internal: true    
-    
-  # Redox Status
-  - id: rx_status
-    platform: modbus_controller
-    name: "Redox Status"
-    address: 0x0108
-    register_type: holding
-    internal: true
-    
-  # Hydrolysis voltage
+      - lambda: return x / 10.0;
+
   - id: hidro_voltage
     platform: modbus_controller
     name: "Hydrolysis Cell Voltage"
     address: 0x0111
     register_type: holding
+    state_class: measurement
     unit_of_measurement: "V"
     accuracy_decimals: 1
     filters:
-      - lambda: return x / 10.0; # Assuming voltage is in tenths
-    
-  - id: relay_state
+      - lambda: return x / 10.0;
+    entity_category: diagnostic
+
+  # ── Internal raw registers (used by binary_sensors / text_sensors) ───────
+  - id: ph_status_raw
     platform: modbus_controller
-    name: "Relay State Raw"
+    address: 0x0107
+    register_type: holding
+    name: "pH Status Raw"
+    internal: true
+
+  - id: rx_status_raw
+    platform: modbus_controller
+    address: 0x0108
+    register_type: holding
+    name: "RX Status Raw"
+    internal: true
+
+  - id: hidro_status_raw
+    platform: modbus_controller
+    address: 0x010D
+    register_type: holding
+    name: "Hydro Status Raw"
+    internal: true
+
+  - id: relay_state_raw
+    platform: modbus_controller
     address: 0x010E
     register_type: holding
-    internal: true  # Hide raw value from the UI
+    name: "Relay State Raw"
+    internal: true
 
-  # Hydrolysis production target (read-only)
-  - id: par_hidro
+  # ── MODBUS page (0x0000–0x000F) ─────────────────────────────────────────
+  - id: ph_alarm_raw
     platform: modbus_controller
-    name: "Hydrolysis Target"
-    address: 0x0502
+    address: 0x000F
     register_type: holding
-    unit_of_measurement: "%"
-    accuracy_decimals: 0
-    filters:
-      - lambda: return x;  # Keep as-is for direct reading
+    name: "pH Alarm Raw"
+    internal: true
 
-  # Redox setpoint (read-only)
-  - id: par_rx1
+  # ── INSTALLER page (0x0408+) ─────────────────────────────────────────────
+  - id: filt_mode_raw
     platform: modbus_controller
-    name: "Redox Target Value"
-    address: 0x0508
+    address: 0x0411
     register_type: holding
-    unit_of_measurement: "mV"
-    accuracy_decimals: 0
-    filters:
-      - lambda: return x;  # Keep as-is for direct reading
+    name: "Filtration Mode Raw"
+    internal: true
 
-  # Target pH Value (read-only)
-  - id: par_ph1
+  - id: filt_manual_state_raw
     platform: modbus_controller
-    name: "PH Target Value"
-    address: 0x0504
+    address: 0x0413
     register_type: holding
-    unit_of_measurement: "pH"
-    accuracy_decimals: 2
-    filters:
-      - lambda: return x / 100.0;  # Convert from hundredths
+    name: "Manual Filtration Raw"
+    internal: true
 
-  # 24-36V line voltage
-  - id: volt_24_36
-    platform: modbus_controller
-    name: "24-36V Line Voltage"
-    address: 0x0022
-    register_type: holding
-    unit_of_measurement: "V"
-    accuracy_decimals: 2
-    filters:
-      - lambda: return x / 1000.0;  # Convert mV to V
-
-  # 12V line voltage
-  - id: volt_12
-    platform: modbus_controller
-    name: "12V Line Voltage"
-    address: 0x0023
-    register_type: holding
-    unit_of_measurement: "V"
-    accuracy_decimals: 2
-    filters:
-      - lambda: return x / 1000.0;  # Convert mV to V
-
-  # 5V line voltage
-  - id: volt_5
-    platform: modbus_controller
-    name: "5V Line Voltage"
-    address: 0x006A
-    register_type: holding
-    unit_of_measurement: "V"
-    accuracy_decimals: 2
-    filters:
-      - lambda: return x / 1000.0;  # Convert mV to V
-      
+# ─── TEXT SENSORS ────────────────────────────────────────────────────────
 text_sensor:
-  - id: ph_alarm_description
+  - id: filtration_mode_text
     platform: template
-    name: "PH Alarm Description"    
+    name: "Filtration Mode"
+    icon: mdi:water-sync
+    update_interval: 5s
     lambda: |-
-      switch (int(id(ph_status).state) & 0x000F) {  // Extract Bits 0-3
-        case 0: return {"No Alarm"};
-        case 1: return {"PH Too High"};
-        case 2: return {"PH Too Low"};
-        case 3: return {"Pump Exceeded Max Time"};
-        case 4: return {"PH Higher Than Setpoint"};
-        case 5: return {"PH Lower Than Setpoint"};
-        default: return {"Unknown Alarm"};
+      switch ((int) id(filt_mode_raw).state) {
+        case  0: return std::string("Manual");
+        case  1: return std::string("Auto");
+        case  2: return std::string("Heating");
+        case  3: return std::string("Smart");
+        case  4: return std::string("Intelligent");
+        case 13: return std::string("Backwash");
+        default: return std::string("Unknown");
       }
 
-  - id: redox_status_description
+  - id: ph_alarm_text
     platform: template
-    name: "Redox Status Description"
+    name: "pH Alarm"
+    icon: mdi:alert
+    update_interval: 5s
     lambda: |-
-      if ((int(id(rx_status).state) & 0x8000) == 0) {
-        return {"Redox Module Not Detected"};
-      } else if ((int(id(rx_status).state) & 0x4000) != 0) {
-        return {"Redox Measurement Active"};
-      } else if ((int(id(rx_status).state) & 0x2000) != 0) {
-        return {"Redox Control Active"};
-      } else if ((int(id(rx_status).state) & 0x1000) != 0) {
-        return {"Redox Pump Active"};
-      } else {
-        return {"Redox Module Idle"};
+      switch ((int) id(ph_alarm_raw).state) {
+        case 0: return std::string("No alarm");
+        case 1: return std::string("pH high");
+        case 2: return std::string("pH low");
+        case 3: return std::string("Pump time exceeded");
+        case 4: return std::string("pH over setpoint");
+        case 5: return std::string("pH under setpoint");
+        case 6: return std::string("Tank level alarm");
+        default: return std::string("Unknown");
       }
 
+  - id: redox_status_text
+    platform: template
+    name: "Redox Status"
+    update_interval: 5s
+    lambda: |-
+      int v = (int) id(rx_status_raw).state;
+      if ((v & 0x8000) == 0) return std::string("Module not detected");
+      if ((v & 0x4000) != 0) return std::string("Measurement active");
+      if ((v & 0x2000) != 0) return std::string("Control active");
+      if ((v & 0x1000) != 0) return std::string("Pump active");
+      return std::string("Idle");
+
+# ─── BINARY SENSORS ──────────────────────────────────────────────────────
 binary_sensor:
-
-  # pH Alarm
+  # ── pH status bits (register 0x0107) ─────────────────────────────────────
   - id: ph_ok
     platform: template
-    name: "PH OK"
-    lambda: |-
-      return (int(id(ph_status).state) & 0x000F) == 0;  // Bits 0-3    
-    
-  # pH Flow status
-  - id: ph_flow_ok
-    platform: template
-    name: "PH Flow Status"
-    lambda: |-
-      return (int(id(ph_status).state) & 0x0400) != 0;  // Bit 10    
+    name: "pH OK"
+    device_class: safety
+    lambda: return (int(id(ph_status_raw).state) & 0x000F) == 0;
 
-  # pH Control Active
+  - id: ph_measurement_active
+    platform: template
+    name: "pH Measurement"
+    device_class: running
+    entity_category: diagnostic
+    lambda: return (int(id(ph_status_raw).state) & 0x4000) != 0;
+
   - id: ph_control_active
     platform: template
-    name: "PH Control Active"
-    lambda: |-
-      return (int(id(ph_status).state) & 0x2000) != 0;  // Bit 13    
-      
-  # pH Module Active
-  - id: ph_module_active
+    name: "pH Control Active"
+    device_class: running
+    entity_category: diagnostic
+    lambda: return (int(id(ph_status_raw).state) & 0x2000) != 0;
+
+  - id: ph_pump_active
     platform: template
-    name: "PH Module Active"
-    lambda: |-
-      return (int(id(ph_status).state) & 0x4000) != 0;  // Bit 14    
-      
+    name: "pH Pump"
+    device_class: running
+    entity_category: diagnostic
+    lambda: return (int(id(ph_status_raw).state) & 0x1000) != 0;
 
-  # Relay 1
-  - id: relay_1
+  # ── Hydrolysis status bits (register 0x010D) ──────────────────────────────
+  - id: hidro_on_target
     platform: template
-    name: "Relay 1 - PH pump"
-    lambda: |-
-      return (int(id(relay_state).state) & 0x0001) != 0;  // Bit 0
+    name: "Hydrolysis On Target"
+    entity_category: diagnostic
+    lambda: return (int(id(hidro_status_raw).state) & 0x0001) != 0;
 
-  # Relay 2
-  - id: relay_2
+  - id: hidro_low_flow
     platform: template
-    name: "Relay 2 - Filtration pump"
-    lambda: |-
-      return (int(id(relay_state).state) & 0x0002) != 0;  // Bit 1
+    name: "Hydrolysis Low Flow"
+    device_class: problem
+    lambda: return (int(id(hidro_status_raw).state) & 0x0002) != 0;
 
-  # Relay 3
-  - id: relay_3
+  - id: hidro_module_active
     platform: template
-    name: "Relay 3"
-    lambda: |-
-      return (int(id(relay_state).state) & 0x0004) != 0;  // Bit 2
+    name: "Hydrolysis Module Active"
+    device_class: running
+    entity_category: diagnostic
+    lambda: return (int(id(hidro_status_raw).state) & 0x0200) != 0;
 
-  # Relay 4
-  - id: relay_4
+  # ── Relay state bits (register 0x010E) ───────────────────────────────────
+  # Bit 0 = Relay 1 (pH pump), Bit 1 = Relay 2 (filtration), Bit 2 = Relay 3,
+  # Bit 3 = AUX1, Bit 4 = AUX2, Bit 5 = AUX3, Bit 6 = AUX4
+  # Light relay bit depends on MBF_PAR_LIGHTING_GPIO assignment on your device.
+
+  - id: filtration_pump_running
     platform: template
-    name: "Relay 4"
-    lambda: |-
-      return (int(id(relay_state).state) & 0x0008) != 0;  // Bit 3
+    name: "Filtration Pump"
+    device_class: running
+    lambda: return (int(id(relay_state_raw).state) & 0x0002) != 0;
 
-  # Relay 5
-  - id: relay_5
+  - id: ph_pump_running
     platform: template
-    name: "Relay 5"
-    lambda: |-
-      return (int(id(relay_state).state) & 0x0010) != 0;  // Bit 4
+    name: "pH Pump Running"
+    device_class: running
+    entity_category: diagnostic
+    lambda: return (int(id(relay_state_raw).state) & 0x0001) != 0;
 
-  # Relay 6
-  - id: relay_6
+  - id: light_state
     platform: template
-    name: "Relay 6"
-    lambda: |-
-      return (int(id(relay_state).state) & 0x0020) != 0;  // Bit 5
+    name: "Pool Light State"
+    device_class: light
+    lambda: return (int(id(relay_state_raw).state) & 0x0004) != 0;  # Relay 3 – adjust if needed
 
-  # Relay 7
-  - id: relay_7
+  - id: aux1_state
     platform: template
-    name: "Relay 7 - Heat pump enable"
-    lambda: |-
-      return (int(id(relay_state).state) & 0x0040) != 0;  // Bit 6
+    name: "AUX1 State"
+    device_class: power
+    lambda: return (int(id(relay_state_raw).state) & 0x0008) != 0;
 
+  - id: aux2_state
+    platform: template
+    name: "AUX2 State"
+    device_class: power
+    lambda: return (int(id(relay_state_raw).state) & 0x0010) != 0;
 
+  - id: aux3_state
+    platform: template
+    name: "AUX3 State"
+    device_class: power
+    lambda: return (int(id(relay_state_raw).state) & 0x0020) != 0;
+
+  - id: aux4_state
+    platform: template
+    name: "AUX4 State"
+    device_class: power
+    lambda: return (int(id(relay_state_raw).state) & 0x0040) != 0;
+
+# ─── SWITCHES ────────────────────────────────────────────────────────────
 switch:
+  # ── Manual Filtration ─────────────────────────────────────────────────────
+  # Direct write to MBF_PAR_FILT_MANUAL_STATE (0x0413) – no EXEC needed.
+  # Only effective when Filtration Mode (0x0411) = 0 (Manual).
   - platform: modbus_controller
-    id: aux3_relay_switch
+    id: manual_filtration
+    name: "Manual Filtration"
+    icon: mdi:pump
+    address: 0x0413
+    register_type: holding
+
+  # ── AUX Relay Switches ────────────────────────────────────────────────────
+  # NeoPool relay write sequence (mirrors HA integration async_write_aux_relay):
+  #   1. Write 1 to 0x010E  (unlock / prepare)
+  #   2. Write new bitmask value to 0x010E
+  #   3. Write 0 to 0x0289
+  #   4. Write 1 to 0x02F5  (EXEC – apply change)
+
+  - platform: template
+    id: aux1_relay
+    name: "AUX1 Relay"
+    icon: mdi:electric-switch
+    assumed_state: false
+    lambda: return (int(id(relay_state_raw).state) & 0x0008) != 0;
+    turn_on_action:
+      - lambda: |-
+          auto *c = id(neopool);
+          uint16_t v = (uint16_t)id(relay_state_raw).state | 0x0008;
+          c->queue_command(esphome::modbus_controller::ModbusCommandItem::create_write_multiple_command(c, 0x010E, 1, {(uint16_t)1}));
+          c->queue_command(esphome::modbus_controller::ModbusCommandItem::create_write_multiple_command(c, 0x010E, 1, {v}));
+          c->queue_command(esphome::modbus_controller::ModbusCommandItem::create_write_multiple_command(c, 0x0289, 1, {(uint16_t)0}));
+          c->queue_command(esphome::modbus_controller::ModbusCommandItem::create_write_multiple_command(c, 0x02F5, 1, {(uint16_t)1}));
+    turn_off_action:
+      - lambda: |-
+          auto *c = id(neopool);
+          uint16_t v = (uint16_t)id(relay_state_raw).state & ~(uint16_t)0x0008;
+          c->queue_command(esphome::modbus_controller::ModbusCommandItem::create_write_multiple_command(c, 0x010E, 1, {(uint16_t)1}));
+          c->queue_command(esphome::modbus_controller::ModbusCommandItem::create_write_multiple_command(c, 0x010E, 1, {v}));
+          c->queue_command(esphome::modbus_controller::ModbusCommandItem::create_write_multiple_command(c, 0x0289, 1, {(uint16_t)0}));
+          c->queue_command(esphome::modbus_controller::ModbusCommandItem::create_write_multiple_command(c, 0x02F5, 1, {(uint16_t)1}));
+
+  - platform: template
+    id: aux2_relay
+    name: "AUX2 Relay"
+    icon: mdi:electric-switch
+    assumed_state: false
+    lambda: return (int(id(relay_state_raw).state) & 0x0010) != 0;
+    turn_on_action:
+      - lambda: |-
+          auto *c = id(neopool);
+          uint16_t v = (uint16_t)id(relay_state_raw).state | 0x0010;
+          c->queue_command(esphome::modbus_controller::ModbusCommandItem::create_write_multiple_command(c, 0x010E, 1, {(uint16_t)1}));
+          c->queue_command(esphome::modbus_controller::ModbusCommandItem::create_write_multiple_command(c, 0x010E, 1, {v}));
+          c->queue_command(esphome::modbus_controller::ModbusCommandItem::create_write_multiple_command(c, 0x0289, 1, {(uint16_t)0}));
+          c->queue_command(esphome::modbus_controller::ModbusCommandItem::create_write_multiple_command(c, 0x02F5, 1, {(uint16_t)1}));
+    turn_off_action:
+      - lambda: |-
+          auto *c = id(neopool);
+          uint16_t v = (uint16_t)id(relay_state_raw).state & ~(uint16_t)0x0010;
+          c->queue_command(esphome::modbus_controller::ModbusCommandItem::create_write_multiple_command(c, 0x010E, 1, {(uint16_t)1}));
+          c->queue_command(esphome::modbus_controller::ModbusCommandItem::create_write_multiple_command(c, 0x010E, 1, {v}));
+          c->queue_command(esphome::modbus_controller::ModbusCommandItem::create_write_multiple_command(c, 0x0289, 1, {(uint16_t)0}));
+          c->queue_command(esphome::modbus_controller::ModbusCommandItem::create_write_multiple_command(c, 0x02F5, 1, {(uint16_t)1}));
+
+  - platform: template
+    id: aux3_relay
     name: "AUX3 Relay"
-    address: 0x010E
-    register_type: holding
-    bitmask: 0x0020  # Bit 5 (adjust if AUX3 is on a different bit)
-    internal: true   # Hide from HA UI
+    icon: mdi:electric-switch
+    assumed_state: false
+    lambda: return (int(id(relay_state_raw).state) & 0x0020) != 0;
+    turn_on_action:
+      - lambda: |-
+          auto *c = id(neopool);
+          uint16_t v = (uint16_t)id(relay_state_raw).state | 0x0020;
+          c->queue_command(esphome::modbus_controller::ModbusCommandItem::create_write_multiple_command(c, 0x010E, 1, {(uint16_t)1}));
+          c->queue_command(esphome::modbus_controller::ModbusCommandItem::create_write_multiple_command(c, 0x010E, 1, {v}));
+          c->queue_command(esphome::modbus_controller::ModbusCommandItem::create_write_multiple_command(c, 0x0289, 1, {(uint16_t)0}));
+          c->queue_command(esphome::modbus_controller::ModbusCommandItem::create_write_multiple_command(c, 0x02F5, 1, {(uint16_t)1}));
+    turn_off_action:
+      - lambda: |-
+          auto *c = id(neopool);
+          uint16_t v = (uint16_t)id(relay_state_raw).state & ~(uint16_t)0x0020;
+          c->queue_command(esphome::modbus_controller::ModbusCommandItem::create_write_multiple_command(c, 0x010E, 1, {(uint16_t)1}));
+          c->queue_command(esphome::modbus_controller::ModbusCommandItem::create_write_multiple_command(c, 0x010E, 1, {v}));
+          c->queue_command(esphome::modbus_controller::ModbusCommandItem::create_write_multiple_command(c, 0x0289, 1, {(uint16_t)0}));
+          c->queue_command(esphome::modbus_controller::ModbusCommandItem::create_write_multiple_command(c, 0x02F5, 1, {(uint16_t)1}));
 
-  - platform: modbus_controller
-    id: aux4_relay_switch
+  - platform: template
+    id: aux4_relay
     name: "AUX4 Relay"
-    address: 0x010E
-    register_type: holding
-    bitmask: 0x0040  # Bit 6 (adjust if AUX4 is on a different bit)
-    internal: true   # Hide from HA UI
+    icon: mdi:electric-switch
+    assumed_state: false
+    lambda: return (int(id(relay_state_raw).state) & 0x0040) != 0;
+    turn_on_action:
+      - lambda: |-
+          auto *c = id(neopool);
+          uint16_t v = (uint16_t)id(relay_state_raw).state | 0x0040;
+          c->queue_command(esphome::modbus_controller::ModbusCommandItem::create_write_multiple_command(c, 0x010E, 1, {(uint16_t)1}));
+          c->queue_command(esphome::modbus_controller::ModbusCommandItem::create_write_multiple_command(c, 0x010E, 1, {v}));
+          c->queue_command(esphome::modbus_controller::ModbusCommandItem::create_write_multiple_command(c, 0x0289, 1, {(uint16_t)0}));
+          c->queue_command(esphome::modbus_controller::ModbusCommandItem::create_write_multiple_command(c, 0x02F5, 1, {(uint16_t)1}));
+    turn_off_action:
+      - lambda: |-
+          auto *c = id(neopool);
+          uint16_t v = (uint16_t)id(relay_state_raw).state & ~(uint16_t)0x0040;
+          c->queue_command(esphome::modbus_controller::ModbusCommandItem::create_write_multiple_command(c, 0x010E, 1, {(uint16_t)1}));
+          c->queue_command(esphome::modbus_controller::ModbusCommandItem::create_write_multiple_command(c, 0x010E, 1, {v}));
+          c->queue_command(esphome::modbus_controller::ModbusCommandItem::create_write_multiple_command(c, 0x0289, 1, {(uint16_t)0}));
+          c->queue_command(esphome::modbus_controller::ModbusCommandItem::create_write_multiple_command(c, 0x02F5, 1, {(uint16_t)1}));
 
-  # Save to EEPROM (writable switch)
-  - platform: modbus_controller
-    id: save_to_eeprom_switch
-    name: "Save to EEPROM"
-    address: 0x02F0
-    register_type: holding
-    bitmask: 0xFFFF
-    internal: true
+  # ── Pool Light ────────────────────────────────────────────────────────────
+  # ON:  write light function code (2) to 0x047B, set timer block 0x0470 = 3 (always on), EXEC
+  # OFF: set timer block 0x0470 = 4 (always off), EXEC
+  # Adjust the relay bit in the lambda if light is on a different relay.
+  - platform: template
+    id: light_relay
+    name: "Pool Light"
+    icon: mdi:lightbulb
+    assumed_state: false
+    lambda: return (int(id(relay_state_raw).state) & 0x0004) != 0;  # adjust bit to match MBF_PAR_LIGHTING_GPIO
+    turn_on_action:
+      - lambda: |-
+          auto *c = id(neopool);
+          c->queue_command(esphome::modbus_controller::ModbusCommandItem::create_write_multiple_command(c, 0x047B, 1, {(uint16_t)2}));
+          c->queue_command(esphome::modbus_controller::ModbusCommandItem::create_write_multiple_command(c, 0x0470, 1, {(uint16_t)3}));
+          c->queue_command(esphome::modbus_controller::ModbusCommandItem::create_write_multiple_command(c, 0x02F5, 1, {(uint16_t)1}));
+    turn_off_action:
+      - lambda: |-
+          auto *c = id(neopool);
+          c->queue_command(esphome::modbus_controller::ModbusCommandItem::create_write_multiple_command(c, 0x0470, 1, {(uint16_t)4}));
+          c->queue_command(esphome::modbus_controller::ModbusCommandItem::create_write_multiple_command(c, 0x02F5, 1, {(uint16_t)1}));
 
-  # Execute Changes (writable switch)
+# ─── SELECT ──────────────────────────────────────────────────────────────
+select:
+  # Filtration mode (MBF_PAR_FILT_MODE, 0x0411)
+  # 0=Manual, 1=Auto, 2=Heating, 3=Smart, 4=Intelligent
   - platform: modbus_controller
-    id: exec_changes_switch
-    name: "Execute Changes"
-    address: 0x02F5
-    register_type: holding
-    bitmask: 0xFFFF
-    internal: true
+    id: filtration_mode_select
+    name: "Filtration Mode"
+    icon: mdi:water-sync
+    address: 0x0411
+    optionsmap:
+      "Manual":      0
+      "Auto":        1
+      "Heating":     2
+      "Smart":       3
+      "Intelligent": 4
 
-  # Manual Mode Enable/Disable (writable switch)
+# ─── NUMBERS (setpoints) ─────────────────────────────────────────────────
+# Changes written here are NOT saved to device EEPROM automatically.
+# Press the "Save Settings" button below to persist values across device restarts.
+number:
+  # Hydrolysis target production level – MBF_PAR_HIDRO (0x0502)
+  # Register unit: tenths of % (register 650 = 65.0%)
   - platform: modbus_controller
-    id: manual_mode_switch
-    name: "Manual Relay Mode"
-    address: 0x0475
+    id: hidro_setpoint
+    name: "Hydrolysis Target"
+    icon: mdi:air-humidifier
+    address: 0x0502
     register_type: holding
-    bitmask: 0xFFFF
-    internal: true
+    min_value: 0
+    max_value: 100
+    step: 1
+    multiply: 10
+    unit_of_measurement: "%"
+    entity_category: config
+
+  # pH upper limit – MBF_PAR_PH1 (0x0504)
+  # Register unit: hundredths of pH (register 740 = pH 7.40)
+  - platform: modbus_controller
+    id: ph_upper_limit
+    name: "pH Upper Limit"
+    address: 0x0504
+    register_type: holding
+    min_value: 5.0
+    max_value: 9.0
+    step: 0.1
+    multiply: 100
+    unit_of_measurement: "pH"
+    entity_category: config
+
+  # pH lower limit – MBF_PAR_PH2 (0x0505)
+  - platform: modbus_controller
+    id: ph_lower_limit
+    name: "pH Lower Limit"
+    address: 0x0505
+    register_type: holding
+    min_value: 5.0
+    max_value: 9.0
+    step: 0.1
+    multiply: 100
+    unit_of_measurement: "pH"
+    entity_category: config
+
+  # Redox / ORP setpoint – MBF_PAR_RX1 (0x0508)
+  - platform: modbus_controller
+    id: redox_setpoint
+    name: "Redox Setpoint"
+    icon: mdi:gradient-vertical
+    address: 0x0508
+    register_type: holding
+    min_value: 0
+    max_value: 1000
+    step: 1
+    unit_of_measurement: "mV"
+    entity_category: config
+
+  # Chlorine setpoint – MBF_PAR_CL1 (0x050A)
+  # Register unit: hundredths of ppm (register 100 = 1.00 ppm)
+  - platform: modbus_controller
+    id: chlorine_setpoint
+    name: "Chlorine Setpoint"
+    icon: mdi:test-tube
+    address: 0x050A
+    register_type: holding
+    min_value: 0
+    max_value: 10
+    step: 0.1
+    multiply: 100
+    unit_of_measurement: "ppm"
+    entity_category: config
+
+# ─── BUTTONS ─────────────────────────────────────────────────────────────
+button:
+  # Save settings – write 1 to 0x02F0 (EEPROM) then 1 to 0x02F5 (EXEC).
+  # Use this after changing any Number setpoint to make the value persist.
+  - platform: template
+    name: "Save Settings"
+    icon: mdi:content-save
+    entity_category: config
+    on_press:
+      - lambda: |-
+          auto *c = id(neopool);
+          c->queue_command(esphome::modbus_controller::ModbusCommandItem::create_write_multiple_command(c, 0x02F0, 1, {(uint16_t)1}));
+          c->queue_command(esphome::modbus_controller::ModbusCommandItem::create_write_multiple_command(c, 0x02F5, 1, {(uint16_t)1}));
+
+  # Clear Errors – sends EXEC command to reset alarm states (MBF_ESCAPE).
+  - platform: template
+    name: "Clear Errors"
+    icon: mdi:reload-alert
+    entity_category: config
+    on_press:
+      - lambda: |-
+          id(neopool)->queue_command(
+              esphome::modbus_controller::ModbusCommandItem::create_write_multiple_command(
+                  id(neopool), 0x02F5, 1, {(uint16_t)1}));
 
