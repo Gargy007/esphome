@@ -83,8 +83,8 @@
 # ╚══════════════════════════════════════════════════════════════════════════╝
 
 esphome:
-  name: tcp-modbus-pool
-  friendly_name: TCP MODBUS POOL
+  name: bazen-modbus
+  friendly_name: "Bazen - Filtrace"
 
 esp32:
   board: m5stack-atom
@@ -95,22 +95,22 @@ logger:
 
 api:
   encryption:
-    key: "KDJ+oVCHHmzYpj3yQW+cN4bksgZ44W/JFEU+9s4EcPQ="
+    key: !secret api_encryption_pool
 
 ota:
   - platform: esphome
-    password: "fbeb2e20eb36e4d19c3e79db16bef4b4"
+    password: !secret ota_password_pool
 
 wifi:
   ssid: !secret wifi_ssid
   password: !secret wifi_password
   manual_ip:
-    static_ip: 192.168.1.120
+    static_ip: 192.168.1.130
     gateway: 192.168.1.1
     subnet: 255.255.255.0
   ap:
     ssid: "Tcp-Modbus-Pool Fallback Hotspot"
-    password: "T0b8zxGCqYzE"
+    password: !secret ap_password_pool
 
 captive_portal:
 

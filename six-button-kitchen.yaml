@@ -11,11 +11,11 @@ logger:
 # Enable Home Assistant API
 api:
   encryption:
-    key: "r75QnDmaos54nsOHDNJ96kPU3OkSCtkdDbvOrSijDwU="
+    key: !secret api_encryption_kitchen
 
 ota:
   - platform: esphome
-    password: "901b98bdb6d4ba613e7aa6ccb26555c6"
+    password: !secret ota_password_kitchen
 
 wifi:
   ssid: !secret wifi_ssid
@@ -29,7 +29,7 @@ wifi:
   # Enable fallback hotspot (captive portal) in case wifi connection fails
   ap:
     ssid: "Wall-Switch-Kitchen"
-    password: "A649eqhMm729"
+    password: !secret ap_password_kitchen
 
 captive_portal:
 

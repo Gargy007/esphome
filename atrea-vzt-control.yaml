@@ -251,7 +251,7 @@ logger:
 
 api:
   encryption:
-    key: !secret api_encryption
+    key: !secret api_encryption_atrea
   on_client_connected:
     then:
       - switch.turn_on: switch_led_green
@@ -263,7 +263,7 @@ api:
 
 ota:
   - platform: esphome
-    password: !secret ota_password
+    password: !secret ota_password_atrea
 
 ethernet:
   type: W5500

@@ -11,11 +11,11 @@ logger:
 # Enable Home Assistant API
 api:
   encryption:
-    key: "9L/bk2VmBAQsr1AOstQ5VefpNbnjGAEziDRPrTKyEBw="
+    key: !secret api_encryption_main_tank
 
 ota:
   - platform: esphome
-    password: "259251edf6e7e1e27ce716db258d0e94"
+    password: !secret ota_password_main_tank
 
 wifi:
   ssid: !secret wifi_ssid
@@ -30,7 +30,7 @@ wifi:
   # Enable fallback hotspot (captive portal) in case wifi connection fails
   ap:
     ssid: "Boiler-Room--Main-Tank"
-    password: "tMUQtkVnJjVW"
+    password: !secret ap_password_main_tank
 
 captive_portal:
 

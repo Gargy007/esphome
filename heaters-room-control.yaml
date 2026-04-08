@@ -169,7 +169,7 @@ logger:
 api:
   id: kotelna_api
   encryption:
-    key: "9L/bk2VmBAQsr1AOstQ5VefpNbnjGAEziDRPrTKyEBw="
+    key: !secret api_encryption_heaters
   reboot_timeout: 5min  # Max. 5 minut bez Home Assistant API, potom restart
   actions:
     - action: ha_watchdog_ping
@@ -180,7 +180,7 @@ api:
 
 ota:
   - platform: esphome
-    password: "259251edf6e7e1e27ce716db258d0e94"
+    password: !secret ota_password_heaters
 
 wifi:
   id: kotelna_wifi
@@ -194,7 +194,7 @@ wifi:
     subnet: 255.255.255.0
   ap:
     ssid: "Boiler-Room-Heaters_v2"
-    password: "tMUQtkVnJjVW"
+    password: !secret ap_password_heaters
   
 
 captive_portal:
