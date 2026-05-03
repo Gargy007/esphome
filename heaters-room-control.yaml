@@ -156,6 +156,9 @@ esp32:
   variant: esp32c6
   framework:
     type: esp-idf
+    sdkconfig_options:
+      CONFIG_LWIP_TCP_SND_BUF_DEFAULT: "16384"
+      CONFIG_LWIP_TCP_WND_DEFAULT: "16384"
 
 # Enable logging
 logger:
@@ -177,6 +180,8 @@ api:
         - lambda: |-
             id(ha_watchdog_posledni_ping) = millis();
             id(ha_watchdog_aktivni) = true;
+            id(ha_watchdog_counter) += 1;
+            id(watchdog_counter_sensor).publish_state(id(ha_watchdog_counter));
 
 ota:
   - platform: esphome
@@ -376,6 +381,11 @@ globals:
     restore_value: no
     initial_value: 'false'
 
+  - id: ha_watchdog_counter
+    type: int
+    restore_value: no
+    initial_value: '0'
+
   # HA watchdog - havárie po 5 minutách bez pingu
   - id: ha_watchdog_5min_timeout_aktivni
     type: bool
@@ -413,12 +423,26 @@ globals:
     restore_value: no
     initial_value: 'false'
 
+  - id: plyn_relay_last_state
+    type: bool
+    restore_value: no
+    initial_value: 'false'
+
 sensor:
+  # Smart Watchdog Counter - HA monitoruje zda se mění
+  - platform: template
+    name: "Watchdog Counter"
+    id: watchdog_counter_sensor
+    update_interval: never
+    accuracy_decimals: 0
+    icon: "mdi:counter"
+    entity_category: diagnostic
+
   # WiFi signál
   - platform: wifi_signal
     name: "WiFi: RSSI"
     id: wifi_rssi
-    update_interval: 15s
+    update_interval: 60s
     unit_of_measurement: "dBm"
     entity_category: diagnostic
   
@@ -426,39 +450,47 @@ sensor:
     address: 0x3c00000559fe8628
     name: "Plynovy kotel: Výstup"
     id: teplota_plynovy_vystup
-    update_interval: 10s
+    update_interval: 30s
     filters:
       - filter_out: nan
+      - delta: 0.3
   
   - platform: dallas_temp
     address: 0x0f00000559c87528
     name: "Plynovy kotel: Vrat"
     id: teplota_plynovy_vrat
-    update_interval: 10s
+    update_interval: 30s
     filters:
       - filter_out: nan
+      - delta: 0.3
   
   - platform: dallas_temp
     address: 0xfb000003ea4ce628
     name: "Kotel: Výstup"
     id: teplota_kotel_vystup
-    update_interval: 10s
+    update_interval: 30s
     # internal: true
+    filters:
+      - delta: 0.3
   
   - platform: dallas_temp
     address: 0x60000003ea354528
     name: "Kotel: Vrat"
     id: teplota_kotel_vrat
-    update_interval: 10s
+    update_interval: 30s
     # internal: true
+    filters:
+      - delta: 0.3
   
   # Teplota komína (Termočlánek přes SPI)
   - platform: max6675
     name: "Kotel: Komín"
     id: teplota_komin
     cs_pin: GPIO18
-    update_interval: 10s
+    update_interval: 30s
     # internal: true
+    filters:
+      - delta: 1.0
 
   # Průtokoměr - KALIBROVATELNÝ
   - platform: pulse_meter
@@ -531,7 +563,7 @@ sensor:
     id: rozdil_plynovy
     unit_of_measurement: "°C"
     accuracy_decimals: 1
-    update_interval: 10s
+    update_interval: 30s
     lambda: |-
       if (isnan(id(teplota_plynovy_vystup).state) || isnan(id(teplota_plynovy_vrat).state)) {
         return {};
@@ -543,7 +575,7 @@ sensor:
     id: rozdil_kotel
     unit_of_measurement: "°C"
     accuracy_decimals: 1
-    update_interval: 10s
+    update_interval: 30s
     # internal: true
     lambda: |-
       if (isnan(id(teplota_kotel_vystup).state) || isnan(id(teplota_kotel_vrat).state)) {
@@ -975,12 +1007,17 @@ switch:
           id(plyn_povolen) = true;
           id(plyn_zapnuto_cas) = millis();
           id(plyn_prvni_check_prosel) = false;
+      - script.execute:
+          id: sync_plyn_relay
+          reason: "HA_switch_on"
     turn_off_action:
       - lambda: |-
           ESP_LOGI("plyn", "Zákaz plynu z HA - vypínám kotel");
           id(plyn_povolen) = false;
-          id(switch_plynovy_kotel).turn_off();
           id(plyn_zapnuto_cas) = 0;
+      - script.execute:
+          id: sync_plyn_relay
+          reason: "HA_switch_off"
 
 # ============================================================================
 # STAVY A DIAGNOSTIKA
@@ -1220,7 +1257,10 @@ interval:
 
           ESP_LOGE("system", "HA watchdog timeout: %.1f min bez pingu - provadim fail-safe restart", elapsed / 60000.0);
           id(plyn_povolen) = false;
-          id(switch_plynovy_kotel).turn_off();
+      - script.execute:
+          id: sync_plyn_relay
+          reason: "HA_watchdog_timeout"
+      - lambda: |-
           id(plyn_stav).publish_state("Watchdog timeout - restart");
           delay(500);
           App.safe_reboot();
@@ -1522,21 +1562,14 @@ interval:
   # Plynový kotel - regulace (10s)
   - interval: 10s
     then:
+      - script.execute:
+          id: sync_plyn_relay
+          reason: "10s_interval_check"
       - lambda: |-
           unsigned long now = millis();
-          bool should_be_on = id(plyn_povolen) && !id(plyn_havarie_aktivni);
           float temp_vystup = id(teplota_plynovy_vystup).state;
           float temp_vrat = id(teplota_plynovy_vrat).state;
           bool cidla_plynu_ok = !isnan(temp_vystup) && !isnan(temp_vrat);
-          
-          // 1. FYZICKÉ SPÍNÁNÍ RELÉ
-          if (should_be_on && !id(switch_plynovy_kotel).state) {
-            id(switch_plynovy_kotel).turn_on();
-            ESP_LOGI("plyn", "Zapínám relé plynového kotle");
-          } else if (!should_be_on && id(switch_plynovy_kotel).state) {
-            id(switch_plynovy_kotel).turn_off();
-            ESP_LOGI("plyn", "Vypínám relé plynového kotle");
-          }
           
           // 2. DETEKCE FUNKČNOSTI - jednou po 5 minutách
           if (id(plyn_povolen) && !id(plyn_havarie_aktivni)
@@ -1550,7 +1583,6 @@ interval:
                 id(plyn_havarie_aktivni) = true;
                 id(plyn_havarie_typ) = "Chyba čidel plynu";
                 id(plyn_havarie_cas) = now;
-                id(switch_plynovy_kotel).turn_off();
               } else {
                 float diff = id(rozdil_plynovy).state;
                 if (diff >= id(plyn_min_rozdil).state) {
@@ -1564,10 +1596,13 @@ interval:
                   id(plyn_havarie_aktivni) = true;
                   id(plyn_havarie_typ) = studeny ? "Kotel netopí - vůbec nezapnul" : "Kotel netopí";
                   id(plyn_havarie_cas) = now;
-                  id(switch_plynovy_kotel).turn_off();
                 }
               }
             }
+          }
+          // Sync relé po detekci havárie
+          if (id(plyn_havarie_aktivni)) {
+            id(sync_plyn_relay).execute("5min_havarie_check");
           }
           
           // 3. PUBLIKOVÁNÍ STAVU
@@ -1596,7 +1631,7 @@ interval:
             id(plyn_havarie_aktivni) = true;
             id(plyn_havarie_typ) = "Chyba čidel plynu";
             id(plyn_havarie_cas) = now;
-            id(switch_plynovy_kotel).turn_off();
+            id(sync_plyn_relay).execute("1min_sensor_check");
             return;
           }
           
@@ -1615,7 +1650,7 @@ interval:
           id(plyn_havarie_aktivni) = true;
           id(plyn_havarie_typ) = typ;
           id(plyn_havarie_cas) = now;
-          id(switch_plynovy_kotel).turn_off();
+          id(sync_plyn_relay).execute("1min_low_diff_havarie");
 
   # Automatický reset havárie po 24 hodinách
   - interval: 24h
@@ -1636,7 +1671,62 @@ interval:
             }
           }
 
+  # Failsafe check - kontrola, jestli fyzické relé odpovídá zamýšlenému stavu
+  - interval: 30s
+    then:
+      - lambda: |-
+          // Kontrola: HA říká aby bylo zapnuto, ale fyzický senzor relé říká OFF
+          bool should_be_on = id(plyn_povolen) && !id(plyn_havarie_aktivni);
+          bool relay_hw_on = id(plyn_status_rele_bezi).state;  // senzor "Plyn: Relé"
+          
+          // Pokud je rozpor déle jak 3x za sebou (90 sekund), to znamená reálný problém
+          static unsigned int mismatch_count = 0;
+          
+          if (should_be_on != relay_hw_on) {
+            mismatch_count++;
+            if (mismatch_count >= 3) {
+              // Rozpor po dobu 90 sekund → něco je špatně!
+              ESP_LOGW("plyn_relay", "FAILSAFE: Rozpor stavu - HA říká %s, HW relé je %s (x%d)", 
+                       should_be_on ? "ON" : "OFF", relay_hw_on ? "ON" : "OFF", mismatch_count);
+              
+              if (should_be_on && !relay_hw_on) {
+                // Mělo by být ON, ale relé je OFF → HAVÁRIE!
+                ESP_LOGE("plyn_relay", "FAILSAFE HAVÁRIE: Relé nereaguje na ON příkaz!");
+                id(plyn_havarie_aktivni) = true;
+                id(plyn_havarie_typ) = "Failsafe: Relé nereaguje";
+                id(plyn_havarie_cas) = millis();
+                id(sync_plyn_relay).execute("failsafe_relay_stuck_off");
+                mismatch_count = 0;
+              }
+              // Pokud neukazuje biti ON když by nemělo, normálně se vypne přes sync_plyn_relay
+              mismatch_count = 0;
+            }
+          } else {
+            mismatch_count = 0;  // Reset při shodě
+          }
+
 script:
+  - id: sync_plyn_relay
+    parameters:
+      reason: string
+    then:
+      - lambda: |-
+          // Centrální logika: měl by mít plynový kotel zapnout?
+          bool should_be_on = id(plyn_povolen) && !id(plyn_havarie_aktivni);
+          bool current_state = id(switch_plynovy_kotel).state;
+          
+          // Fyzicky sepnout POUZE pokud je změna
+          if (should_be_on != current_state) {
+            if (should_be_on) {
+              id(switch_plynovy_kotel).turn_on();
+              ESP_LOGI("plyn_relay", "RELAY ON (%s): povolen=%d, havarie=%d", reason.c_str(), id(plyn_povolen), id(plyn_havarie_aktivni));
+            } else {
+              id(switch_plynovy_kotel).turn_off();
+              ESP_LOGI("plyn_relay", "RELAY OFF (%s): povolen=%d, havarie=%d", reason.c_str(), id(plyn_povolen), id(plyn_havarie_aktivni));
+            }
+            id(plyn_relay_last_state) = should_be_on;
+          }
+
   - id: kotel_forced_run_timer
     then:
       - delay: 5min
