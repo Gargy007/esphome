@@ -163,6 +163,7 @@ esp32:
 # Enable logging
 logger:
   level: INFO
+  baud_rate: 0  # Disable UART0 logging - GPIO20 (RX) used for OneWire, GPIO21 (TX) for pulse_meter
   logs:
     sensor: WARN
     dallas.sensor: WARN
