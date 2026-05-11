@@ -34,8 +34,8 @@
 # ---------
 # - Relé: GPIO1 (oběhové čerpadlo kotle)
 # - Čidla teploty (DS18B20):
-#   * 0xfb000003ea4ce628 - Výstup z kotle
-#   * 0x60000003ea354528 - Vrat do kotle
+#   * 0x60000003ea354528 - Výstup z kotle
+#   * 0xfb000003ea4ce628 - Vrat do kotle
 # - Termočlánek (MAX6675): GPIO18 - Teplota komína
 #
 # FUNKCE:
@@ -223,8 +223,8 @@ one_wire:
 
 # 0x3c00000559fe8628 (DS18B20) OK - Plynovy kotel vystup
 # 0x0f00000559c87528 (DS18B20) OK - Plynovy kotel vrat
-# 0xfb000003ea4ce628 (DS18B20) OK - Kotel na tuhá paliva vystup
-# 0x60000003ea354528 (DS18B20) OK - Kotel na tuhá paliva vrat
+# 0x60000003ea354528 (DS18B20) OK - Kotel na tuhá paliva vystup
+# 0xfb000003ea4ce628 (DS18B20) OK - Kotel na tuhá paliva vrat
 
 
 
@@ -465,7 +465,7 @@ sensor:
       - delta: 0.3
   
   - platform: dallas_temp
-    address: 0xfb000003ea4ce628
+    address: 0x60000003ea354528
     name: "Kotel: Výstup"
     id: teplota_kotel_vystup
     update_interval: 30s
@@ -474,7 +474,7 @@ sensor:
       - delta: 0.3
   
   - platform: dallas_temp
-    address: 0x60000003ea354528
+    address: 0xfb000003ea4ce628
     name: "Kotel: Vrat"
     id: teplota_kotel_vrat
     update_interval: 30s
