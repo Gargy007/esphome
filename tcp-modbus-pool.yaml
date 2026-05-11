@@ -14,19 +14,20 @@
 # ║  Hydrolysis Intensity      ║  0x0101     ║  % (÷10)                      ║
 # ║  pH Level                  ║  0x0102     ║  pH (÷100)                    ║
 # ║  Redox Potential           ║  0x0103     ║  mV                           ║
-# ║  Chlorine Level            ║  0x0104     ║  ppm (÷100)                   ║
 # ║  Conductivity              ║  0x0105     ║  %                            ║
 # ║  Water Temperature         ║  0x0106     ║  °C (÷10)                     ║
 # ║  Hydrolysis Cell Voltage   ║  0x0111     ║  V (÷10, diagnostic)          ║
 # ║  Filtration Mode (text)    ║  0x0411     ║  Manual/Auto/Heating/Smart/…  ║
 # ║  pH Alarm (text)           ║  0x000F     ║  popis alarmu pH čerpadla     ║
 # ║  Redox Status (text)       ║  0x0108     ║  stav Redox modulu            ║
+# ║  Device Time (text)        ║  0x0408/09  ║  interní čas zařízení         ║
+# ║  Filtration Schedule (text)║  0x0434+    ║  T1/T2/T3 start-stop časy    ║
 # ╠════════════════════════════╩═════════════╩═══════════════════════════════╣
 # ║  BINÁRNÍ SENZORY (stav relay/modulů)                                     ║
 # ╠════════════════════════════╦═════════════╦═══════════════════════════════╣
 # ║  Filtration Pump           ║  0x010E b1  ║  čerpadlo filtrации běží      ║
 # ║  pH Pump Running           ║  0x010E b0  ║  pH dávkovací čerpadlo        ║
-# ║  Pool Light State          ║  0x010E b2  ║  svítidlo (adj. dle GPIO)     ║
+# ║  Pool Light State          ║  0x010E b2  ║  svítidlo (adj. dle GPIO)     ║  -- REMOVED (not used)
 # ║  AUX1–AUX4 State           ║  0x010E b3–6║  stav AUX relé                ║
 # ║  pH OK / Control / Pump    ║  0x0107     ║  bity stavu pH modulu         ║
 # ║  Hydrolysis On Target      ║  0x010D b0  ║  elektrolýza na setpointu     ║
@@ -36,13 +37,11 @@
 # ║  OVLÁDÁNÍ / AKTUÁTORY                                                    ║
 # ╠════════════════════════════╦═════════════╦═══════════════════════════════╣
 # ║  Manual Filtration (switch)║  0x0413     ║  ZAP/VYP filtrace v ruč. módu ║
-# ║  AUX1–AUX4 (switch)        ║  0x010E     ║  přím. ovl. AUX relé (EXEC)   ║
-# ║  Pool Light (switch)       ║  0x0470     ║  světlo přes timer blok       ║
+# ║  AUX1–AUX4 (switch)        ║  timer blk  ║  AUX timer ALWAYS_ON/OFF+EXEC ║
 # ║  Filtration Mode (select)  ║  0x0411     ║  Manual/Auto/Heating/…        ║
 # ║  Hydrolysis Target (number)║  0x0502     ║  0–100 % výkonu elektrolýzy   ║
 # ║  pH Upper/Lower (number)   ║  0x0504/05  ║  pH 5.0–9.0 (setpointy)       ║
 # ║  Redox Setpoint (number)   ║  0x0508     ║  0–1000 mV                    ║
-# ║  Chlorine Setpoint (number)║  0x050A     ║  0–10 ppm                     ║
 # ╠════════════════════════════╩═════════════╩═══════════════════════════════╣
 # ║  TLAČÍTKA                                                                ║
 # ╠════════════════════════════╦═════════════╦═══════════════════════════════╣
@@ -67,11 +66,11 @@
 # ║                                                                          ║
 # ║  4. Ovládání AUX relé / Pool Light:                                      ║
 # ║     a) Přepnout příslušný switch                                         ║
-# ║     b) Zápis probíhá sekvencí: unlock→hodnota→clear 0x0289→EXEC          ║
-# ║        (Mirror HA integrace async_write_aux_relay)                       ║
+# ║     b) Zápis probíhá sekvencí: 0x0289=1→bitmask→0x0289=0→EXEC             ║
+# ║        (Dle Tasmota driveru / modbus_regs.c)                              ║
 # ║                                                                          ║
 # ║  5. Reset alarmů:                                                        ║
-# ║     a) Stisknout "Clear Errors" – odešle EXEC (0x02F5)                   ║
+# ║     a) Stisknout "Clear Errors" – odešle MBF_ESCAPE (0x0297)              ║
 # ║                                                                          ║
 # ║  POZNÁMKY:                                                               ║
 # ║  • Bity relay v 0x010E závisí na konfiguraci GPIO v NeoPool zařízení.    ║
@@ -85,6 +84,11 @@
 esphome:
   name: bazen-modbus
   friendly_name: "Bazen - Filtrace"
+  on_boot:
+    priority: -10
+    then:
+      - delay: 120s
+      - script.execute: sync_device_time
 
 esp32:
   board: m5stack-atom
@@ -113,6 +117,21 @@ wifi:
     password: !secret ap_password_pool
 
 captive_portal:
+
+# ─── GLOBALS (persistent state for AntiFrost mode) ─────────────────────────
+globals:
+  - id: antifrost_saved_mode
+    type: int
+    restore_value: no
+    initial_value: '1'
+  - id: antifrost_saved_manual
+    type: bool
+    restore_value: no
+    initial_value: 'false'
+  - id: filtration_start_ms
+    type: uint32_t
+    restore_value: no
+    initial_value: '0'
 
 # ─── UART & MODBUS ────────────────────────────────────────────────────────
 uart:
@@ -145,14 +164,6 @@ sensor:
     update_interval: 60s
     entity_category: diagnostic
 
-  - platform: copy
-    source_id: wifi_signal_db
-    name: "WiFi Signal Percent"
-    filters:
-      - lambda: return min(max(2 * (x + 100.0), 0.0), 100.0);
-    unit_of_measurement: "%"
-    entity_category: diagnostic
-    device_class: ""
 
   # ── MEASUREMENT PAGE (input registers 0x0100–0x0111) ────────────────────
   # The HA integration reads these via FC04 (read_input_registers). Using
@@ -202,18 +213,6 @@ sensor:
     unit_of_measurement: "mV"
     accuracy_decimals: 0
     icon: mdi:gradient-vertical
-
-  - id: measure_cl
-    platform: modbus_controller
-    name: "Chlorine Level"
-    address: 0x0104
-    register_type: holding
-    state_class: measurement
-    unit_of_measurement: "ppm"
-    accuracy_decimals: 2
-    filters:
-      - lambda: return x / 100.0;
-    icon: mdi:shaker-outline
 
   - id: measure_conductivity
     platform: modbus_controller
@@ -277,6 +276,33 @@ sensor:
     name: "Relay State Raw"
     internal: true
 
+  # ── Service password (0x0604, BCD encoded) ────────────────────────────────
+  - id: service_password_raw
+    platform: modbus_controller
+    address: 0x0604
+    register_type: holding
+    name: "Service Password Raw"
+    force_new_range: true
+    internal: true
+
+  # ── Manual Control state (0x0289) ─────────────────────────────────────────
+  - id: manual_ctrl_raw
+    platform: modbus_controller
+    address: 0x0289
+    register_type: holding
+    name: "Manual Ctrl Raw"
+    force_new_range: true
+    internal: true
+    on_value:
+      then:
+        - lambda: |-
+            if ((int)x == 1) {
+              ESP_LOGW("neopool", "MBF_SET_MANUAL_CTRL stuck at 1! Auto-resetting...");
+              auto *c = id(neopool);
+              c->queue_command(esphome::modbus_controller::ModbusCommandItem::create_write_multiple_command(c, 0x0289, 1, {(uint16_t)0}));
+              c->queue_command(esphome::modbus_controller::ModbusCommandItem::create_write_multiple_command(c, 0x02F5, 1, {(uint16_t)1}));
+            }
+
   # ── MODBUS page (0x0000–0x000F) ─────────────────────────────────────────
   - id: ph_alarm_raw
     platform: modbus_controller
@@ -292,6 +318,13 @@ sensor:
     register_type: holding
     name: "Filtration Mode Raw"
     internal: true
+    on_value:
+      then:
+        - lambda: |-
+            int mode = (int)x;
+            if (mode == 0) id(filtration_mode_select).publish_state("Manual");
+            else if (mode == 1) id(filtration_mode_select).publish_state("Auto");
+            else if (mode == 2) id(filtration_mode_select).publish_state("Heating");
 
   - id: filt_manual_state_raw
     platform: modbus_controller
@@ -299,15 +332,253 @@ sensor:
     register_type: holding
     name: "Manual Filtration Raw"
     internal: true
+    on_value:
+      then:
+        - lambda: |-
+            id(manual_filtration).publish_state(x == 1.0f);
+
+  # ── USER page setpoint raw registers (0x05xx) ───────────────────────────
+  - id: hidro_setpoint_raw
+    platform: modbus_controller
+    address: 0x0502
+    register_type: holding
+    name: "Hydrolysis Target Raw"
+    force_new_range: true
+    internal: true
+
+  - id: ph_upper_raw
+    platform: modbus_controller
+    address: 0x0504
+    register_type: holding
+    name: "pH Upper Raw"
+    internal: true
+
+  - id: ph_lower_raw
+    platform: modbus_controller
+    address: 0x0505
+    register_type: holding
+    name: "pH Lower Raw"
+    internal: true
+
+  - id: redox_setpoint_raw
+    platform: modbus_controller
+    address: 0x0508
+    register_type: holding
+    name: "Redox Setpoint Raw"
+    internal: true
+
+  # ── DEVICE TIME (0x0408–0x0409, unix timestamp – local time) ─────────────
+  - id: device_time_low
+    platform: modbus_controller
+    address: 0x0408
+    register_type: holding
+    name: "Device Time Low"
+    force_new_range: true
+    internal: true
+
+  - id: device_time_high
+    platform: modbus_controller
+    address: 0x0409
+    register_type: holding
+    name: "Device Time High"
+    internal: true
+
+  # ── FILTRATION TIMER 1 (base 0x0434) ─────────────────────────────────────
+  - id: filt1_enable
+    platform: modbus_controller
+    address: 0x0434
+    register_type: holding
+    name: "Filtration Timer 1 Enable"
+    force_new_range: true
+    internal: true
+
+  - id: filt1_on
+    platform: modbus_controller
+    address: 0x0435
+    register_type: holding
+    value_type: U_WORD
+    name: "Filtration Timer 1 On"
+    internal: true
+
+  - id: filt1_interval
+    platform: modbus_controller
+    address: 0x043B
+    register_type: holding
+    value_type: U_WORD
+    name: "Filtration Timer 1 Interval"
+    internal: true
+
+  # ── FILTRATION TIMER 2 (base 0x0443) ─────────────────────────────────────
+  - id: filt2_enable
+    platform: modbus_controller
+    address: 0x0443
+    register_type: holding
+    name: "Filtration Timer 2 Enable"
+    force_new_range: true
+    internal: true
+
+  - id: filt2_on
+    platform: modbus_controller
+    address: 0x0444
+    register_type: holding
+    value_type: U_WORD
+    name: "Filtration Timer 2 On"
+    internal: true
+
+  - id: filt2_interval
+    platform: modbus_controller
+    address: 0x044A
+    register_type: holding
+    value_type: U_WORD
+    name: "Filtration Timer 2 Interval"
+    internal: true
+
+  # ── FILTRATION TIMER 3 (base 0x0452) ─────────────────────────────────────
+  - id: filt3_enable
+    platform: modbus_controller
+    address: 0x0452
+    register_type: holding
+    name: "Filtration Timer 3 Enable"
+    force_new_range: true
+    internal: true
+
+  - id: filt3_on
+    platform: modbus_controller
+    address: 0x0453
+    register_type: holding
+    value_type: U_WORD
+    name: "Filtration Timer 3 On"
+    internal: true
+
+  - id: filt3_interval
+    platform: modbus_controller
+    address: 0x0459
+    register_type: holding
+    value_type: U_WORD
+    name: "Filtration Timer 3 Interval"
+    internal: true
+
+  # ── Heating registers ──────────────────────────────────────────────────────
+  - id: heating_mode_raw
+    platform: modbus_controller
+    address: 0x0414
+    register_type: holding
+    value_type: U_WORD
+    name: "Heating Mode Raw"
+    internal: false
+    on_value:
+      then:
+        - lambda: |-
+            ESP_LOGI("heating", "Heating Mode Raw = %d (0=disabled, 1=solar, 2=heat-pump, 3=both)", (int)x);
+
+  - id: heating_gpio_raw
+    platform: modbus_controller
+    address: 0x0415
+    register_type: holding
+    value_type: U_WORD
+    name: "Heating GPIO Raw"
+    internal: false
+    on_value:
+      then:
+        - lambda: |-
+            ESP_LOGI("heating", "Heating GPIO Raw = %d (0=none, 1-4=R1-R4, 5=AUX1, 6=AUX2, 7=AUX3, 8=AUX4)", (int)x);
+
+  - id: heating_temp_raw
+    platform: modbus_controller
+    address: 0x0416
+    register_type: holding
+    value_type: U_WORD
+    name: "Heating Temp Setpoint Raw"
+    internal: false
+    on_value:
+      then:
+        - lambda: |-
+            ESP_LOGI("heating", "Heating Temp Setpoint Raw = %d (= %.1f °C)", (int)x, x / 10.0f);
+
+  # ── Filtration Auto Progress (0-100 %) ─────────────────────────────────────
+  - id: filtration_auto_progress
+    platform: template
+    name: "Filtration Auto Progress"
+    unit_of_measurement: "%"
+    accuracy_decimals: 0
+    icon: mdi:progress-clock
+    update_interval: 30s
+    lambda: |-
+      if (std::isnan(id(filt_mode_raw).state)) return {};
+      int mode = (int)id(filt_mode_raw).state;
+      if (mode != 1) return {};
+      if (std::isnan(id(device_time_low).state) || std::isnan(id(device_time_high).state)) return {};
+      uint32_t dev_ts = ((uint32_t)(uint16_t)id(device_time_high).state << 16)
+                      | (uint32_t)(uint16_t)id(device_time_low).state;
+      if (dev_ts == 0) return {};
+      int sod = (int)(dev_ts % 86400);
+      if (std::isnan(id(filt1_enable).state) || std::isnan(id(filt2_enable).state) || std::isnan(id(filt3_enable).state)) return {};
+      if (std::isnan(id(filt1_on).state) || std::isnan(id(filt1_interval).state)) return {};
+      if (std::isnan(id(filt2_on).state) || std::isnan(id(filt2_interval).state)) return {};
+      if (std::isnan(id(filt3_on).state) || std::isnan(id(filt3_interval).state)) return {};
+      int on[3], off[3], n = 0, en, iv;
+      en = (int)id(filt1_enable).state; iv = (int)id(filt1_interval).state;
+      if (en != 0 && en != 4 && iv > 0) { on[n]=(int)id(filt1_on).state; off[n]=(on[n]+iv)%86400; n++; }
+      en = (int)id(filt2_enable).state; iv = (int)id(filt2_interval).state;
+      if (en != 0 && en != 4 && iv > 0) { on[n]=(int)id(filt2_on).state; off[n]=(on[n]+iv)%86400; n++; }
+      en = (int)id(filt3_enable).state; iv = (int)id(filt3_interval).state;
+      if (en != 0 && en != 4 && iv > 0) { on[n]=(int)id(filt3_on).state; off[n]=(on[n]+iv)%86400; n++; }
+      if (n == 0) return {};
+      for (int i = 0; i < n; i++) {
+        bool inside = (off[i] > on[i]) ? (sod >= on[i] && sod < off[i]) : (sod >= on[i] || sod < off[i]);
+        if (inside) {
+          int elapsed = (sod >= on[i]) ? (sod - on[i]) : (sod + 86400 - on[i]);
+          int total = (off[i] > on[i]) ? (off[i] - on[i]) : (off[i] + 86400 - on[i]);
+          if (total == 0) return 0.0f;
+          return (float)(elapsed * 100 / total);
+        }
+      }
+      int min_until = 86400, min_since = 86400;
+      for (int i = 0; i < n; i++) {
+        int u = on[i] - sod; if (u <= 0) u += 86400; if (u < min_until) min_until = u;
+        int s = sod - off[i]; if (s < 0) s += 86400; if (s < min_since) min_since = s;
+      }
+      int gap = min_since + min_until;
+      if (gap == 0) return 0.0f;
+      return (float)(min_since * 100 / gap);
 
 # ─── TEXT SENSORS ────────────────────────────────────────────────────────
 text_sensor:
+  # ── Service Password (BCD decoded from 0x0604) ───────────────────────────
+  - id: service_password_text
+    platform: template
+    name: "Service Password"
+    icon: mdi:key
+    entity_category: diagnostic
+    update_interval: 60s
+    lambda: |-
+      if (std::isnan(id(service_password_raw).state)) return std::string("N/A");
+      uint16_t bcd = (uint16_t)id(service_password_raw).state;
+      char buf[5];
+      snprintf(buf, sizeof(buf), "%d%d%d%d",
+               (bcd >> 12) & 0xF, (bcd >> 8) & 0xF, (bcd >> 4) & 0xF, bcd & 0xF);
+      return std::string(buf);
+
+  # ── Manual Ctrl State (debug – shows if 0x0289 is stuck) ─────────────────
+  - id: manual_ctrl_text
+    platform: template
+    name: "Manual Ctrl State"
+    icon: mdi:alert-circle
+    entity_category: diagnostic
+    update_interval: 30s
+    lambda: |-
+      if (std::isnan(id(manual_ctrl_raw).state)) return std::string("N/A");
+      int v = (int)id(manual_ctrl_raw).state;
+      if (v == 0) return std::string("OK (disabled)");
+      return std::string("STUCK! Value=" + to_string(v));
+
   - id: filtration_mode_text
     platform: template
     name: "Filtration Mode"
     icon: mdi:water-sync
     update_interval: 5s
     lambda: |-
+      if (id(antifrost_mode).state) return std::string("AntiFrost");
       switch ((int) id(filt_mode_raw).state) {
         case  0: return std::string("Manual");
         case  1: return std::string("Auto");
@@ -347,6 +618,158 @@ text_sensor:
       if ((v & 0x1000) != 0) return std::string("Pump active");
       return std::string("Idle");
 
+
+  - id: pool_error_list
+    platform: template
+    name: "Pool Error List"
+    icon: mdi:alert-box-outline
+    update_interval: 5s
+    lambda: |-
+      std::string errors;
+      int ph_alarm = (int) id(ph_alarm_raw).state;
+      if (ph_alarm == 1) { if (!errors.empty()) errors += ", "; errors += "pH high"; }
+      if (ph_alarm == 2) { if (!errors.empty()) errors += ", "; errors += "pH low"; }
+      if (ph_alarm == 3) { if (!errors.empty()) errors += ", "; errors += "pH pump time exceeded"; }
+      if (ph_alarm == 4) { if (!errors.empty()) errors += ", "; errors += "pH over setpoint"; }
+      if (ph_alarm == 5) { if (!errors.empty()) errors += ", "; errors += "pH under setpoint"; }
+      if (ph_alarm == 6) { if (!errors.empty()) errors += ", "; errors += "pH tank level"; }
+      if ((int(id(ph_status_raw).state) & 0x000F) != 0) {
+        // Grace period: skip pH not OK for 2 min after filtration start
+        bool in_grace = false;
+        if (id(filtration_pump_running).state && id(filtration_start_ms) > 0) {
+          uint32_t elapsed = millis() - id(filtration_start_ms);
+          if (elapsed < 120000) in_grace = true;
+        }
+        if (!in_grace) {
+          // Only report if pH deviates ≥ 0.2 from limits
+          float ph = id(measure_ph).state;
+          float upper = id(ph_upper_raw).state / 100.0f;
+          if (std::isnan(ph) || std::isnan(upper) || ph > upper + 0.2f) {
+            if (!errors.empty()) errors += ", "; errors += "pH not OK";
+          }
+        }
+      }
+      if (id(hidro_low_flow).state) {
+        if (!errors.empty()) errors += ", "; errors += "Low flow";
+      }
+      if ((int(id(rx_status_raw).state) & 0x8000) == 0) {
+        if (!errors.empty()) errors += ", "; errors += "Redox module missing";
+      }
+      if (id(boost_mode).state) {
+        if (!errors.empty()) errors += ", "; errors += "⚡ BOOST";
+      }
+      if (errors.empty()) {
+        if (id(antifrost_mode).state) return std::string("❄ AntiFrost");
+        return std::string("OK");
+      }
+      if (id(antifrost_mode).state) errors = "❄ AntiFrost | " + errors;
+      return errors;
+
+  # ── Device Time (combines 0x0408 low + 0x0409 high → local timestamp) ────
+  - id: device_time_text
+    platform: template
+    name: "Device Time"
+    icon: mdi:clock-outline
+    update_interval: 30s
+    lambda: |-
+      uint32_t ts = ((uint32_t)(uint16_t)id(device_time_high).state << 16)
+                  | (uint32_t)(uint16_t)id(device_time_low).state;
+      if (ts == 0) return std::string("N/A");
+      time_t t = (time_t)ts;
+      struct tm *ti = gmtime(&t);
+      char buf[20];
+      snprintf(buf, sizeof(buf), "%02d:%02d:%02d %02d.%02d.%04d",
+               ti->tm_hour, ti->tm_min, ti->tm_sec,
+               ti->tm_mday, ti->tm_mon + 1, ti->tm_year + 1900);
+      return std::string(buf);
+
+  # ── Filtration Timer Schedule (T1/T2/T3 start–stop) ──────────────────────
+  - id: filtration_schedule
+    platform: template
+    name: "Filtration Schedule"
+    icon: mdi:timer-outline
+    update_interval: 30s
+    lambda: |-
+      if (std::isnan(id(filt1_enable).state) || std::isnan(id(filt2_enable).state) || std::isnan(id(filt3_enable).state)) return std::string("Čekám na data...");
+      if (std::isnan(id(filt1_on).state) || std::isnan(id(filt1_interval).state)) return std::string("Čekám na data...");
+      if (std::isnan(id(filt2_on).state) || std::isnan(id(filt2_interval).state)) return std::string("Čekám na data...");
+      if (std::isnan(id(filt3_on).state) || std::isnan(id(filt3_interval).state)) return std::string("Čekám na data...");
+      auto fmt = [](int seconds) -> std::string {
+        int h = (seconds / 3600) % 24;
+        int m = (seconds % 3600) / 60;
+        char buf[6];
+        snprintf(buf, sizeof(buf), "%02d:%02d", h, m);
+        return std::string(buf);
+      };
+      std::string result;
+      int en1 = (int)id(filt1_enable).state; int iv1 = (int)id(filt1_interval).state;
+      if (en1 != 0 && en1 != 4 && iv1 > 0) {
+        int on1 = (int)id(filt1_on).state;
+        result += "T1: " + fmt(on1) + "-" + fmt(on1 + iv1);
+      }
+      int en2 = (int)id(filt2_enable).state; int iv2 = (int)id(filt2_interval).state;
+      if (en2 != 0 && en2 != 4 && iv2 > 0) {
+        if (!result.empty()) result += " | ";
+        int on2 = (int)id(filt2_on).state;
+        result += "T2: " + fmt(on2) + "-" + fmt(on2 + iv2);
+      }
+      int en3 = (int)id(filt3_enable).state; int iv3 = (int)id(filt3_interval).state;
+      if (en3 != 0 && en3 != 4 && iv3 > 0) {
+        if (!result.empty()) result += " | ";
+        int on3 = (int)id(filt3_on).state;
+        result += "T3: " + fmt(on3) + "-" + fmt(on3 + iv3);
+      }
+      if (result.empty()) return std::string("Žádné aktivní timery");
+      return result;
+
+  # ── Filtration Auto Info (elapsed / remaining text for Auto mode) ────────
+  - id: filtration_auto_info
+    platform: template
+    name: "Filtration Auto Info"
+    icon: mdi:timer-sand
+    update_interval: 30s
+    lambda: |-
+      if (std::isnan(id(filt_mode_raw).state)) return std::string("");
+      int mode = (int)id(filt_mode_raw).state;
+      if (mode != 1) return std::string("");
+      if (std::isnan(id(device_time_low).state) || std::isnan(id(device_time_high).state)) return std::string("Čekám na data...");
+      uint32_t dev_ts = ((uint32_t)(uint16_t)id(device_time_high).state << 16)
+                      | (uint32_t)(uint16_t)id(device_time_low).state;
+      if (dev_ts == 0) return std::string("N/A");
+      int sod = (int)(dev_ts % 86400);
+      if (std::isnan(id(filt1_enable).state) || std::isnan(id(filt1_on).state) || std::isnan(id(filt1_interval).state)) return std::string("Čekám na data...");
+      if (std::isnan(id(filt2_enable).state) || std::isnan(id(filt2_on).state) || std::isnan(id(filt2_interval).state)) return std::string("Čekám na data...");
+      if (std::isnan(id(filt3_enable).state) || std::isnan(id(filt3_on).state) || std::isnan(id(filt3_interval).state)) return std::string("Čekám na data...");
+      int on[3], off[3], n = 0, en, iv;
+      en = (int)id(filt1_enable).state; iv = (int)id(filt1_interval).state;
+      if (en != 0 && en != 4 && iv > 0) { on[n]=(int)id(filt1_on).state; off[n]=(on[n]+iv)%86400; n++; }
+      en = (int)id(filt2_enable).state; iv = (int)id(filt2_interval).state;
+      if (en != 0 && en != 4 && iv > 0) { on[n]=(int)id(filt2_on).state; off[n]=(on[n]+iv)%86400; n++; }
+      en = (int)id(filt3_enable).state; iv = (int)id(filt3_interval).state;
+      if (en != 0 && en != 4 && iv > 0) { on[n]=(int)id(filt3_on).state; off[n]=(on[n]+iv)%86400; n++; }
+      if (n == 0) return std::string("Žádné timery");
+      for (int i = 0; i < n; i++) {
+        bool inside = (off[i] > on[i]) ? (sod >= on[i] && sod < off[i]) : (sod >= on[i] || sod < off[i]);
+        if (inside) {
+          int elapsed = (sod >= on[i]) ? (sod - on[i]) : (sod + 86400 - on[i]);
+          int total = (off[i] > on[i]) ? (off[i] - on[i]) : (off[i] + 86400 - on[i]);
+          int remaining = total - elapsed;
+          char buf[64];
+          snprintf(buf, sizeof(buf), "Filtruje %d:%02d | Konec za %d:%02d",
+                   elapsed/3600, (elapsed%3600)/60, remaining/3600, (remaining%3600)/60);
+          return std::string(buf);
+        }
+      }
+      int min_until = 86400, min_since = 86400;
+      for (int i = 0; i < n; i++) {
+        int u = on[i] - sod; if (u <= 0) u += 86400; if (u < min_until) min_until = u;
+        int s = sod - off[i]; if (s < 0) s += 86400; if (s < min_since) min_since = s;
+      }
+      char buf[64];
+      snprintf(buf, sizeof(buf), "Stojí %d:%02d | Start za %d:%02d",
+               min_since/3600, (min_since%3600)/60, min_until/3600, (min_until%3600)/60);
+      return std::string(buf);
+
 # ─── BINARY SENSORS ──────────────────────────────────────────────────────
 binary_sensor:
   # ── pH status bits (register 0x0107) ─────────────────────────────────────
@@ -354,7 +777,22 @@ binary_sensor:
     platform: template
     name: "pH OK"
     device_class: safety
-    lambda: return (int(id(ph_status_raw).state) & 0x000F) == 0;
+    lambda: |-
+      // Grace period: ignore pH status for 2 min after filtration pump starts
+      if (id(filtration_pump_running).state && id(filtration_start_ms) > 0) {
+        uint32_t elapsed = millis() - id(filtration_start_ms);
+        if (elapsed < 120000) return true;  // assume OK during grace period
+      }
+      // Check pH register status bits
+      if ((int(id(ph_status_raw).state) & 0x000F) != 0) return false;
+      // Check pH value tolerance: only report not-OK if pH deviates ≥ 0.2 from limits
+      float ph = id(measure_ph).state;
+      float upper = id(ph_upper_raw).state / 100.0f;
+      float lower = id(ph_lower_raw).state / 100.0f;
+      if (!std::isnan(ph) && !std::isnan(upper) && !std::isnan(lower)) {
+        if (ph > upper + 0.2f || ph < lower - 0.2f) return false;
+      }
+      return true;
 
   - id: ph_measurement_active
     platform: template
@@ -388,6 +826,8 @@ binary_sensor:
     platform: template
     name: "Hydrolysis Low Flow"
     device_class: problem
+    filters:
+      - delayed_on: 60s
     lambda: return (int(id(hidro_status_raw).state) & 0x0002) != 0;
 
   - id: hidro_module_active
@@ -396,6 +836,39 @@ binary_sensor:
     device_class: running
     entity_category: diagnostic
     lambda: return (int(id(hidro_status_raw).state) & 0x0200) != 0;
+
+  - id: boost_mode
+    platform: template
+    name: "Boost Mode"
+    icon: mdi:flash-alert
+    device_class: running
+    lambda: return (int(id(hidro_status_raw).state) & 0x0100) != 0;
+
+  # ── Pool Error (souhrnný – ON pokud jakákoliv chyba) ─────────────────────
+  - id: pool_error
+    platform: template
+    name: "Pool Error"
+    device_class: problem
+    lambda: |-
+      if ((int) id(ph_alarm_raw).state != 0) return true;
+      if ((int(id(ph_status_raw).state) & 0x000F) != 0) {
+        // Grace period: skip for 2 min after filtration start
+        bool in_grace = false;
+        if (id(filtration_pump_running).state && id(filtration_start_ms) > 0) {
+          uint32_t elapsed = millis() - id(filtration_start_ms);
+          if (elapsed < 120000) in_grace = true;
+        }
+        if (!in_grace) {
+          float ph = id(measure_ph).state;
+          float upper = id(ph_upper_raw).state / 100.0f;
+          float lower = id(ph_lower_raw).state / 100.0f;
+          if (std::isnan(ph) || std::isnan(upper) || std::isnan(lower)
+              || ph > upper + 0.2f || ph < lower - 0.2f) return true;
+        }
+      }
+      if (id(hidro_low_flow).state) return true;
+      if ((int(id(rx_status_raw).state) & 0x8000) == 0) return true;
+      return false;
 
   # ── Relay state bits (register 0x010E) ───────────────────────────────────
   # Bit 0 = Relay 1 (pH pump), Bit 1 = Relay 2 (filtration), Bit 2 = Relay 3,
@@ -407,6 +880,10 @@ binary_sensor:
     name: "Filtration Pump"
     device_class: running
     lambda: return (int(id(relay_state_raw).state) & 0x0002) != 0;
+    on_press:
+      then:
+        - lambda: |-
+            id(filtration_start_ms) = millis();
 
   - id: ph_pump_running
     platform: template
@@ -414,12 +891,6 @@ binary_sensor:
     device_class: running
     entity_category: diagnostic
     lambda: return (int(id(relay_state_raw).state) & 0x0001) != 0;
-
-  - id: light_state
-    platform: template
-    name: "Pool Light State"
-    device_class: light
-    lambda: return (int(id(relay_state_raw).state) & 0x0004) != 0;  # Relay 3 – adjust if needed
 
   - id: aux1_state
     platform: template
@@ -448,21 +919,44 @@ binary_sensor:
 # ─── SWITCHES ────────────────────────────────────────────────────────────
 switch:
   # ── Manual Filtration ─────────────────────────────────────────────────────
-  # Direct write to MBF_PAR_FILT_MANUAL_STATE (0x0413) – no EXEC needed.
-  # Only effective when Filtration Mode (0x0411) = 0 (Manual).
-  - platform: modbus_controller
+  # Must write 0x0411=0 (Manual) + EXEC, delay 1s, then 0x0413 + EXEC.
+  # Same sequence as antifrost_cycle (confirmed working).
+  - platform: template
     id: manual_filtration
     name: "Manual Filtration"
     icon: mdi:pump
-    address: 0x0413
-    register_type: holding
+    turn_on_action:
+      - lambda: |-
+          id(manual_filtration).publish_state(true);
+          auto *c = id(neopool);
+          c->queue_command(esphome::modbus_controller::ModbusCommandItem::create_write_multiple_command(c, 0x0411, 1, {(uint16_t)0}));
+          c->queue_command(esphome::modbus_controller::ModbusCommandItem::create_write_multiple_command(c, 0x02F5, 1, {(uint16_t)1}));
+      - delay: 1s
+      - lambda: |-
+          auto *c = id(neopool);
+          c->queue_command(esphome::modbus_controller::ModbusCommandItem::create_write_multiple_command(c, 0x0413, 1, {(uint16_t)1}));
+          c->queue_command(esphome::modbus_controller::ModbusCommandItem::create_write_multiple_command(c, 0x02F5, 1, {(uint16_t)1}));
+      - script.execute: refresh_after_change
+    turn_off_action:
+      - lambda: |-
+          id(manual_filtration).publish_state(false);
+          auto *c = id(neopool);
+          c->queue_command(esphome::modbus_controller::ModbusCommandItem::create_write_multiple_command(c, 0x0411, 1, {(uint16_t)0}));
+          c->queue_command(esphome::modbus_controller::ModbusCommandItem::create_write_multiple_command(c, 0x02F5, 1, {(uint16_t)1}));
+      - delay: 1s
+      - lambda: |-
+          auto *c = id(neopool);
+          c->queue_command(esphome::modbus_controller::ModbusCommandItem::create_write_multiple_command(c, 0x0413, 1, {(uint16_t)0}));
+          c->queue_command(esphome::modbus_controller::ModbusCommandItem::create_write_multiple_command(c, 0x02F5, 1, {(uint16_t)1}));
+      - script.execute: refresh_after_change
 
   # ── AUX Relay Switches ────────────────────────────────────────────────────
-  # NeoPool relay write sequence (mirrors HA integration async_write_aux_relay):
-  #   1. Write 1 to 0x010E  (unlock / prepare)
-  #   2. Write new bitmask value to 0x010E
-  #   3. Write 0 to 0x0289
-  #   4. Write 1 to 0x02F5  (EXEC – apply change)
+  # Uses timer block TIMER_ENABLE register (same approach as Tasmota NPLight):
+  #   ON  = write 3 (MBV_PAR_CTIMER_ALWAYS_ON)  to AUXn_INT1 base + 0
+  #   OFF = write 4 (MBV_PAR_CTIMER_ALWAYS_OFF) to AUXn_INT1 base + 0
+  #   then write 1 to 0x02F5 (MBF_EXEC)
+  # Timer enable addresses (INT1): AUX1=0x04AC AUX2=0x04BB AUX3=0x04CA AUX4=0x04D9
+  # ALL writes use FC 0x10 (create_write_multiple_command) – NeoPool protocol!
 
   - platform: template
     id: aux1_relay
@@ -473,19 +967,15 @@ switch:
     turn_on_action:
       - lambda: |-
           auto *c = id(neopool);
-          uint16_t v = (uint16_t)id(relay_state_raw).state | 0x0008;
-          c->queue_command(esphome::modbus_controller::ModbusCommandItem::create_write_multiple_command(c, 0x010E, 1, {(uint16_t)1}));
-          c->queue_command(esphome::modbus_controller::ModbusCommandItem::create_write_multiple_command(c, 0x010E, 1, {v}));
-          c->queue_command(esphome::modbus_controller::ModbusCommandItem::create_write_multiple_command(c, 0x0289, 1, {(uint16_t)0}));
+          c->queue_command(esphome::modbus_controller::ModbusCommandItem::create_write_multiple_command(c, 0x04AC, 1, {(uint16_t)3}));
           c->queue_command(esphome::modbus_controller::ModbusCommandItem::create_write_multiple_command(c, 0x02F5, 1, {(uint16_t)1}));
+      - script.execute: refresh_after_change
     turn_off_action:
       - lambda: |-
           auto *c = id(neopool);
-          uint16_t v = (uint16_t)id(relay_state_raw).state & ~(uint16_t)0x0008;
-          c->queue_command(esphome::modbus_controller::ModbusCommandItem::create_write_multiple_command(c, 0x010E, 1, {(uint16_t)1}));
-          c->queue_command(esphome::modbus_controller::ModbusCommandItem::create_write_multiple_command(c, 0x010E, 1, {v}));
-          c->queue_command(esphome::modbus_controller::ModbusCommandItem::create_write_multiple_command(c, 0x0289, 1, {(uint16_t)0}));
+          c->queue_command(esphome::modbus_controller::ModbusCommandItem::create_write_multiple_command(c, 0x04AC, 1, {(uint16_t)4}));
           c->queue_command(esphome::modbus_controller::ModbusCommandItem::create_write_multiple_command(c, 0x02F5, 1, {(uint16_t)1}));
+      - script.execute: refresh_after_change
 
   - platform: template
     id: aux2_relay
@@ -496,19 +986,15 @@ switch:
     turn_on_action:
       - lambda: |-
           auto *c = id(neopool);
-          uint16_t v = (uint16_t)id(relay_state_raw).state | 0x0010;
-          c->queue_command(esphome::modbus_controller::ModbusCommandItem::create_write_multiple_command(c, 0x010E, 1, {(uint16_t)1}));
-          c->queue_command(esphome::modbus_controller::ModbusCommandItem::create_write_multiple_command(c, 0x010E, 1, {v}));
-          c->queue_command(esphome::modbus_controller::ModbusCommandItem::create_write_multiple_command(c, 0x0289, 1, {(uint16_t)0}));
+          c->queue_command(esphome::modbus_controller::ModbusCommandItem::create_write_multiple_command(c, 0x04BB, 1, {(uint16_t)3}));
           c->queue_command(esphome::modbus_controller::ModbusCommandItem::create_write_multiple_command(c, 0x02F5, 1, {(uint16_t)1}));
+      - script.execute: refresh_after_change
     turn_off_action:
       - lambda: |-
           auto *c = id(neopool);
-          uint16_t v = (uint16_t)id(relay_state_raw).state & ~(uint16_t)0x0010;
-          c->queue_command(esphome::modbus_controller::ModbusCommandItem::create_write_multiple_command(c, 0x010E, 1, {(uint16_t)1}));
-          c->queue_command(esphome::modbus_controller::ModbusCommandItem::create_write_multiple_command(c, 0x010E, 1, {v}));
-          c->queue_command(esphome::modbus_controller::ModbusCommandItem::create_write_multiple_command(c, 0x0289, 1, {(uint16_t)0}));
+          c->queue_command(esphome::modbus_controller::ModbusCommandItem::create_write_multiple_command(c, 0x04BB, 1, {(uint16_t)4}));
           c->queue_command(esphome::modbus_controller::ModbusCommandItem::create_write_multiple_command(c, 0x02F5, 1, {(uint16_t)1}));
+      - script.execute: refresh_after_change
 
   - platform: template
     id: aux3_relay
@@ -519,19 +1005,15 @@ switch:
     turn_on_action:
       - lambda: |-
           auto *c = id(neopool);
-          uint16_t v = (uint16_t)id(relay_state_raw).state | 0x0020;
-          c->queue_command(esphome::modbus_controller::ModbusCommandItem::create_write_multiple_command(c, 0x010E, 1, {(uint16_t)1}));
-          c->queue_command(esphome::modbus_controller::ModbusCommandItem::create_write_multiple_command(c, 0x010E, 1, {v}));
-          c->queue_command(esphome::modbus_controller::ModbusCommandItem::create_write_multiple_command(c, 0x0289, 1, {(uint16_t)0}));
+          c->queue_command(esphome::modbus_controller::ModbusCommandItem::create_write_multiple_command(c, 0x04CA, 1, {(uint16_t)3}));
           c->queue_command(esphome::modbus_controller::ModbusCommandItem::create_write_multiple_command(c, 0x02F5, 1, {(uint16_t)1}));
+      - script.execute: refresh_after_change
     turn_off_action:
       - lambda: |-
           auto *c = id(neopool);
-          uint16_t v = (uint16_t)id(relay_state_raw).state & ~(uint16_t)0x0020;
-          c->queue_command(esphome::modbus_controller::ModbusCommandItem::create_write_multiple_command(c, 0x010E, 1, {(uint16_t)1}));
-          c->queue_command(esphome::modbus_controller::ModbusCommandItem::create_write_multiple_command(c, 0x010E, 1, {v}));
-          c->queue_command(esphome::modbus_controller::ModbusCommandItem::create_write_multiple_command(c, 0x0289, 1, {(uint16_t)0}));
+          c->queue_command(esphome::modbus_controller::ModbusCommandItem::create_write_multiple_command(c, 0x04CA, 1, {(uint16_t)4}));
           c->queue_command(esphome::modbus_controller::ModbusCommandItem::create_write_multiple_command(c, 0x02F5, 1, {(uint16_t)1}));
+      - script.execute: refresh_after_change
 
   - platform: template
     id: aux4_relay
@@ -542,147 +1024,201 @@ switch:
     turn_on_action:
       - lambda: |-
           auto *c = id(neopool);
-          uint16_t v = (uint16_t)id(relay_state_raw).state | 0x0040;
-          c->queue_command(esphome::modbus_controller::ModbusCommandItem::create_write_multiple_command(c, 0x010E, 1, {(uint16_t)1}));
-          c->queue_command(esphome::modbus_controller::ModbusCommandItem::create_write_multiple_command(c, 0x010E, 1, {v}));
-          c->queue_command(esphome::modbus_controller::ModbusCommandItem::create_write_multiple_command(c, 0x0289, 1, {(uint16_t)0}));
+          c->queue_command(esphome::modbus_controller::ModbusCommandItem::create_write_multiple_command(c, 0x04D9, 1, {(uint16_t)3}));
           c->queue_command(esphome::modbus_controller::ModbusCommandItem::create_write_multiple_command(c, 0x02F5, 1, {(uint16_t)1}));
+      - script.execute: refresh_after_change
     turn_off_action:
       - lambda: |-
           auto *c = id(neopool);
-          uint16_t v = (uint16_t)id(relay_state_raw).state & ~(uint16_t)0x0040;
-          c->queue_command(esphome::modbus_controller::ModbusCommandItem::create_write_multiple_command(c, 0x010E, 1, {(uint16_t)1}));
-          c->queue_command(esphome::modbus_controller::ModbusCommandItem::create_write_multiple_command(c, 0x010E, 1, {v}));
-          c->queue_command(esphome::modbus_controller::ModbusCommandItem::create_write_multiple_command(c, 0x0289, 1, {(uint16_t)0}));
+          c->queue_command(esphome::modbus_controller::ModbusCommandItem::create_write_multiple_command(c, 0x04D9, 1, {(uint16_t)4}));
           c->queue_command(esphome::modbus_controller::ModbusCommandItem::create_write_multiple_command(c, 0x02F5, 1, {(uint16_t)1}));
+      - script.execute: refresh_after_change
 
-  # ── Pool Light ────────────────────────────────────────────────────────────
-  # ON:  write light function code (2) to 0x047B, set timer block 0x0470 = 3 (always on), EXEC
-  # OFF: set timer block 0x0470 = 4 (always off), EXEC
-  # Adjust the relay bit in the lambda if light is on a different relay.
+  # ── AntiFrost Mode ────────────────────────────────────────────────────────
+  # Cycles filtration pump: 5 min ON / 15 min OFF to prevent freezing.
+  # Saves current filtration mode & manual state on activation, restores on deactivation.
   - platform: template
-    id: light_relay
-    name: "Pool Light"
-    icon: mdi:lightbulb
-    assumed_state: false
-    lambda: return (int(id(relay_state_raw).state) & 0x0004) != 0;  # adjust bit to match MBF_PAR_LIGHTING_GPIO
+    id: antifrost_mode
+    name: "AntiFrost Mode"
+    icon: mdi:snowflake-alert
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_OFF
     turn_on_action:
       - lambda: |-
-          auto *c = id(neopool);
-          c->queue_command(esphome::modbus_controller::ModbusCommandItem::create_write_multiple_command(c, 0x047B, 1, {(uint16_t)2}));
-          c->queue_command(esphome::modbus_controller::ModbusCommandItem::create_write_multiple_command(c, 0x0470, 1, {(uint16_t)3}));
-          c->queue_command(esphome::modbus_controller::ModbusCommandItem::create_write_multiple_command(c, 0x02F5, 1, {(uint16_t)1}));
+          // Save current filtration mode and manual pump state
+          id(antifrost_saved_mode) = (int)id(filt_mode_raw).state;
+          id(antifrost_saved_manual) = id(manual_filtration).state;
+      - script.execute: antifrost_cycle
     turn_off_action:
+      - script.stop: antifrost_cycle
       - lambda: |-
+          // Restore saved filtration mode
           auto *c = id(neopool);
-          c->queue_command(esphome::modbus_controller::ModbusCommandItem::create_write_multiple_command(c, 0x0470, 1, {(uint16_t)4}));
+          uint16_t mode = (uint16_t)id(antifrost_saved_mode);
+          c->queue_command(esphome::modbus_controller::ModbusCommandItem::create_write_multiple_command(c, 0x0411, 1, {mode}));
           c->queue_command(esphome::modbus_controller::ModbusCommandItem::create_write_multiple_command(c, 0x02F5, 1, {(uint16_t)1}));
+      - delay: 1s
+      - lambda: |-
+          // Restore saved manual state (only relevant if mode was Manual)
+          if (id(antifrost_saved_mode) == 0) {
+            auto *c = id(neopool);
+            uint16_t ms = id(antifrost_saved_manual) ? 1 : 0;
+            c->queue_command(esphome::modbus_controller::ModbusCommandItem::create_write_multiple_command(c, 0x0413, 1, {ms}));
+            c->queue_command(esphome::modbus_controller::ModbusCommandItem::create_write_multiple_command(c, 0x02F5, 1, {(uint16_t)1}));
+          }
+      - script.execute: refresh_after_change
 
 # ─── SELECT ──────────────────────────────────────────────────────────────
 select:
   # Filtration mode (MBF_PAR_FILT_MODE, 0x0411)
-  # 0=Manual, 1=Auto, 2=Heating, 3=Smart, 4=Intelligent
-  - platform: modbus_controller
+  # 0=Manual, 1=Auto, 2=Heating
+  # Must send EXEC (0x02F5) after write for the device to accept the change.
+  - platform: template
     id: filtration_mode_select
-    name: "Filtration Mode"
+    name: "Filtration Mode Select"
     icon: mdi:water-sync
-    address: 0x0411
-    optionsmap:
-      "Manual":      0
-      "Auto":        1
-      "Heating":     2
-      "Smart":       3
-      "Intelligent": 4
+    options:
+      - "Manual"
+      - "Auto"
+      - "Heating"
+    set_action:
+      - lambda: |-
+          uint16_t val = 1;
+          if (x == "Manual") val = 0;
+          else if (x == "Auto") val = 1;
+          else if (x == "Heating") val = 2;
+          // Immediately update UI state
+          id(filtration_mode_select).publish_state(x);
+          auto *c = id(neopool);
+          c->queue_command(esphome::modbus_controller::ModbusCommandItem::create_write_multiple_command(c, 0x0411, 1, {val}));
+          c->queue_command(esphome::modbus_controller::ModbusCommandItem::create_write_multiple_command(c, 0x02F5, 1, {(uint16_t)1}));
+      - script.execute: refresh_after_change
 
 # ─── NUMBERS (setpoints) ─────────────────────────────────────────────────
-# Changes written here are NOT saved to device EEPROM automatically.
-# Press the "Save Settings" button below to persist values across device restarts.
+# Each write: value → EEPROM save (0x02F0) → EXEC (0x02F5)
+# Per NeoPool docs: USER page registers need EEPROM save to persist.
 number:
   # Hydrolysis target production level – MBF_PAR_HIDRO (0x0502)
-  # Register unit: tenths of % (register 650 = 65.0%)
-  - platform: modbus_controller
+  # Register unit: tenths of g/h (register 160 = 16.0 g/h)
+  - platform: template
     id: hidro_setpoint
     name: "Hydrolysis Target"
     icon: mdi:air-humidifier
-    address: 0x0502
-    register_type: holding
     min_value: 0
-    max_value: 100
+    max_value: 16
     step: 1
-    multiply: 10
-    unit_of_measurement: "%"
+    unit_of_measurement: "g/h"
     entity_category: config
+    lambda: |-
+      if (std::isnan(id(hidro_setpoint_raw).state)) return {};
+      return id(hidro_setpoint_raw).state / 10.0f;
+    set_action:
+      - lambda: |-
+          uint16_t val = (uint16_t)(x * 10);
+          auto *c = id(neopool);
+          c->queue_command(esphome::modbus_controller::ModbusCommandItem::create_write_multiple_command(c, 0x0502, 1, {val}));
+          c->queue_command(esphome::modbus_controller::ModbusCommandItem::create_write_multiple_command(c, 0x02F0, 1, {(uint16_t)1}));
+          c->queue_command(esphome::modbus_controller::ModbusCommandItem::create_write_multiple_command(c, 0x02F5, 1, {(uint16_t)1}));
 
   # pH upper limit – MBF_PAR_PH1 (0x0504)
   # Register unit: hundredths of pH (register 740 = pH 7.40)
-  - platform: modbus_controller
+  - platform: template
     id: ph_upper_limit
     name: "pH Upper Limit"
-    address: 0x0504
-    register_type: holding
     min_value: 5.0
     max_value: 9.0
     step: 0.1
-    multiply: 100
     unit_of_measurement: "pH"
     entity_category: config
+    lambda: |-
+      if (std::isnan(id(ph_upper_raw).state)) return {};
+      return id(ph_upper_raw).state / 100.0f;
+    set_action:
+      - lambda: |-
+          uint16_t val = (uint16_t)(x * 100);
+          auto *c = id(neopool);
+          c->queue_command(esphome::modbus_controller::ModbusCommandItem::create_write_multiple_command(c, 0x0504, 1, {val}));
+          c->queue_command(esphome::modbus_controller::ModbusCommandItem::create_write_multiple_command(c, 0x02F0, 1, {(uint16_t)1}));
+          c->queue_command(esphome::modbus_controller::ModbusCommandItem::create_write_multiple_command(c, 0x02F5, 1, {(uint16_t)1}));
 
   # pH lower limit – MBF_PAR_PH2 (0x0505)
-  - platform: modbus_controller
+  - platform: template
     id: ph_lower_limit
     name: "pH Lower Limit"
-    address: 0x0505
-    register_type: holding
     min_value: 5.0
     max_value: 9.0
     step: 0.1
-    multiply: 100
     unit_of_measurement: "pH"
     entity_category: config
+    lambda: |-
+      if (std::isnan(id(ph_lower_raw).state)) return {};
+      return id(ph_lower_raw).state / 100.0f;
+    set_action:
+      - lambda: |-
+          uint16_t val = (uint16_t)(x * 100);
+          auto *c = id(neopool);
+          c->queue_command(esphome::modbus_controller::ModbusCommandItem::create_write_multiple_command(c, 0x0505, 1, {val}));
+          c->queue_command(esphome::modbus_controller::ModbusCommandItem::create_write_multiple_command(c, 0x02F0, 1, {(uint16_t)1}));
+          c->queue_command(esphome::modbus_controller::ModbusCommandItem::create_write_multiple_command(c, 0x02F5, 1, {(uint16_t)1}));
 
   # Redox / ORP setpoint – MBF_PAR_RX1 (0x0508)
-  - platform: modbus_controller
+  - platform: template
     id: redox_setpoint
     name: "Redox Setpoint"
     icon: mdi:gradient-vertical
-    address: 0x0508
-    register_type: holding
     min_value: 0
     max_value: 1000
     step: 1
     unit_of_measurement: "mV"
     entity_category: config
+    lambda: |-
+      if (std::isnan(id(redox_setpoint_raw).state)) return {};
+      return id(redox_setpoint_raw).state;
+    set_action:
+      - lambda: |-
+          uint16_t val = (uint16_t)x;
+          auto *c = id(neopool);
+          c->queue_command(esphome::modbus_controller::ModbusCommandItem::create_write_multiple_command(c, 0x0508, 1, {val}));
+          c->queue_command(esphome::modbus_controller::ModbusCommandItem::create_write_multiple_command(c, 0x02F0, 1, {(uint16_t)1}));
+          c->queue_command(esphome::modbus_controller::ModbusCommandItem::create_write_multiple_command(c, 0x02F5, 1, {(uint16_t)1}));
 
-  # Chlorine setpoint – MBF_PAR_CL1 (0x050A)
-  # Register unit: hundredths of ppm (register 100 = 1.00 ppm)
-  - platform: modbus_controller
-    id: chlorine_setpoint
-    name: "Chlorine Setpoint"
-    icon: mdi:test-tube
-    address: 0x050A
-    register_type: holding
-    min_value: 0
-    max_value: 10
-    step: 0.1
-    multiply: 100
-    unit_of_measurement: "ppm"
+  # Heating temperature setpoint – MBF_PAR_HEATING_TEMP (0x0416)
+  # Register unit: tenths of °C (register 280 = 28.0 °C)
+  - platform: template
+    id: heating_temp_setpoint
+    name: "Heating Temp Setpoint"
+    icon: mdi:thermometer
+    min_value: 10.0
+    max_value: 40.0
+    step: 0.5
+    unit_of_measurement: "°C"
     entity_category: config
+    lambda: |-
+      if (std::isnan(id(heating_temp_raw).state)) return {};
+      return id(heating_temp_raw).state / 10.0f;
+    set_action:
+      - lambda: |-
+          uint16_t val = (uint16_t)(x * 10);
+          auto *c = id(neopool);
+          c->queue_command(esphome::modbus_controller::ModbusCommandItem::create_write_multiple_command(c, 0x0416, 1, {val}));
+          c->queue_command(esphome::modbus_controller::ModbusCommandItem::create_write_multiple_command(c, 0x02F0, 1, {(uint16_t)1}));
+          c->queue_command(esphome::modbus_controller::ModbusCommandItem::create_write_multiple_command(c, 0x02F5, 1, {(uint16_t)1}));
 
 # ─── BUTTONS ─────────────────────────────────────────────────────────────
 button:
   # Save settings – write 1 to 0x02F0 (EEPROM) then 1 to 0x02F5 (EXEC).
-  # Use this after changing any Number setpoint to make the value persist.
-  - platform: template
-    name: "Save Settings"
-    icon: mdi:content-save
-    entity_category: config
-    on_press:
-      - lambda: |-
-          auto *c = id(neopool);
-          c->queue_command(esphome::modbus_controller::ModbusCommandItem::create_write_multiple_command(c, 0x02F0, 1, {(uint16_t)1}));
-          c->queue_command(esphome::modbus_controller::ModbusCommandItem::create_write_multiple_command(c, 0x02F5, 1, {(uint16_t)1}));
+  # Setpoints now auto-save via set_action, so this button is no longer needed.
+  # - platform: template
+  #   name: "Save Settings"
+  #   icon: mdi:content-save
+  #   entity_category: config
+  #   on_press:
+  #     - lambda: |-
+  #         auto *c = id(neopool);
+  #         c->queue_command(esphome::modbus_controller::ModbusCommandItem::create_write_multiple_command(c, 0x02F0, 1, {(uint16_t)1}));
+  #         c->queue_command(esphome::modbus_controller::ModbusCommandItem::create_write_multiple_command(c, 0x02F5, 1, {(uint16_t)1}));
 
-  # Clear Errors – sends EXEC command to reset alarm states (MBF_ESCAPE).
+  # Clear Errors – write to MBF_ESCAPE (0x0297) = same as pressing ESC on device screen.
   - platform: template
     name: "Clear Errors"
     icon: mdi:reload-alert
@@ -691,5 +1227,176 @@ button:
       - lambda: |-
           id(neopool)->queue_command(
               esphome::modbus_controller::ModbusCommandItem::create_write_multiple_command(
-                  id(neopool), 0x02F5, 1, {(uint16_t)1}));
+                  id(neopool), 0x0297, 1, {(uint16_t)1}));
+
+  # Sync Device Time – manually trigger time synchronization with HA.
+  - platform: template
+    name: "Sync Device Time"
+    icon: mdi:clock-check
+    entity_category: config
+    on_press:
+      - script.execute: sync_device_time
+
+  # Emergency: reset MBF_SET_MANUAL_CTRL (0x0289) to 0,
+  # force all AUX timer INT1+INT2 enables to 4 (ALWAYS_OFF),
+  # restore filtration mode to Auto, then EXEC.
+  - platform: template
+    name: "Emergency Reset Relay Control"
+    icon: mdi:alert-decagram
+    entity_category: config
+    on_press:
+      - lambda: |-
+          auto *c = id(neopool);
+          ESP_LOGW("neopool", "Emergency: resetting manual ctrl + AUX timers OFF + filtration Auto");
+          // Reset manual control
+          c->queue_command(esphome::modbus_controller::ModbusCommandItem::create_write_multiple_command(c, 0x0289, 1, {(uint16_t)0}));
+          // Force AUX1-4 INT1 timer enables to 4 (ALWAYS_OFF)
+          c->queue_command(esphome::modbus_controller::ModbusCommandItem::create_write_multiple_command(c, 0x04AC, 1, {(uint16_t)4}));
+          c->queue_command(esphome::modbus_controller::ModbusCommandItem::create_write_multiple_command(c, 0x04BB, 1, {(uint16_t)4}));
+          c->queue_command(esphome::modbus_controller::ModbusCommandItem::create_write_multiple_command(c, 0x04CA, 1, {(uint16_t)4}));
+          c->queue_command(esphome::modbus_controller::ModbusCommandItem::create_write_multiple_command(c, 0x04D9, 1, {(uint16_t)4}));
+          // Force AUX1-4 INT2 timer enables to 4 (ALWAYS_OFF)
+          c->queue_command(esphome::modbus_controller::ModbusCommandItem::create_write_multiple_command(c, 0x0461, 1, {(uint16_t)4}));
+          c->queue_command(esphome::modbus_controller::ModbusCommandItem::create_write_multiple_command(c, 0x047F, 1, {(uint16_t)4}));
+          c->queue_command(esphome::modbus_controller::ModbusCommandItem::create_write_multiple_command(c, 0x048E, 1, {(uint16_t)4}));
+          c->queue_command(esphome::modbus_controller::ModbusCommandItem::create_write_multiple_command(c, 0x049D, 1, {(uint16_t)4}));
+          // Restore filtration mode to Auto (1)
+          c->queue_command(esphome::modbus_controller::ModbusCommandItem::create_write_multiple_command(c, 0x0411, 1, {(uint16_t)1}));
+          // EXEC
+          c->queue_command(esphome::modbus_controller::ModbusCommandItem::create_write_multiple_command(c, 0x02F5, 1, {(uint16_t)1}));
+      - script.execute: refresh_after_change
+
+# ─── TIME SOURCE ─────────────────────────────────────────────────────────
+time:
+  - platform: homeassistant
+    id: ha_time
+
+# ─── SCRIPT ──────────────────────────────────────────────────────────────
+script:
+  # Force re-read of key status registers ~2 s after a control change
+  # so that relay_state_raw, filt_mode_raw, filt_manual_state_raw update quickly.
+  # Reads only the 3 relevant registers instead of full update() to avoid
+  # duplicate command warnings when a regular poll cycle is in progress.
+  - id: refresh_after_change
+    mode: restart
+    then:
+      - delay: 2s
+      - lambda: |-
+          auto *c = id(neopool);
+          // Re-read key status registers so UI updates quickly
+          // 0x010D–0x010E: hidro_status + relay_state (must match the merged poll range)
+          c->queue_command(esphome::modbus_controller::ModbusCommandItem::create_read_command(
+              c, esphome::modbus_controller::ModbusRegisterType::HOLDING, 0x010D, 2));
+          // 0x0411–0x0413: filt_mode, filt_gpio, filt_manual_state
+          c->queue_command(esphome::modbus_controller::ModbusCommandItem::create_read_command(
+              c, esphome::modbus_controller::ModbusRegisterType::HOLDING, 0x0411, 3));
+
+  - id: antifrost_cycle
+    mode: single
+    then:
+      - logger.log:
+          level: INFO
+          tag: antifrost
+          format: "AntiFrost cycle script STARTED"
+      - delay: 100ms  # Let switch state publish before checking while condition
+      - while:
+          condition:
+            switch.is_on: antifrost_mode
+          then:
+            # Pump ON: first switch to Manual mode
+            - logger.log:
+                level: INFO
+                tag: antifrost
+                format: "Step 1: Writing 0x0411=0 (Manual mode) + EXEC"
+            - lambda: |-
+                auto *c = id(neopool);
+                c->queue_command(esphome::modbus_controller::ModbusCommandItem::create_write_multiple_command(c, 0x0411, 1, {(uint16_t)0}));
+                c->queue_command(esphome::modbus_controller::ModbusCommandItem::create_write_multiple_command(c, 0x02F5, 1, {(uint16_t)1}));
+                ESP_LOGI("antifrost", "Queued 0x0411=0 + EXEC");
+            - delay: 1s
+            # Then turn pump ON
+            - logger.log:
+                level: INFO
+                tag: antifrost
+                format: "Step 2: Writing 0x0413=1 (pump ON) + EXEC"
+            - lambda: |-
+                auto *c = id(neopool);
+                c->queue_command(esphome::modbus_controller::ModbusCommandItem::create_write_multiple_command(c, 0x0413, 1, {(uint16_t)1}));
+                c->queue_command(esphome::modbus_controller::ModbusCommandItem::create_write_multiple_command(c, 0x02F5, 1, {(uint16_t)1}));
+                ESP_LOGI("antifrost", "Queued 0x0413=1 + EXEC");
+            - script.execute: refresh_after_change
+            - logger.log:
+                level: INFO
+                tag: antifrost
+                format: "Pump ON phase done, waiting 5 min..."
+            - delay: 5min
+            # Pump OFF: first ensure Manual mode (in case someone changed it)
+            - logger.log:
+                level: INFO
+                tag: antifrost
+                format: "Step 3: Writing 0x0411=0 (Manual mode) + EXEC"
+            - lambda: |-
+                auto *c = id(neopool);
+                c->queue_command(esphome::modbus_controller::ModbusCommandItem::create_write_multiple_command(c, 0x0411, 1, {(uint16_t)0}));
+                c->queue_command(esphome::modbus_controller::ModbusCommandItem::create_write_multiple_command(c, 0x02F5, 1, {(uint16_t)1}));
+                ESP_LOGI("antifrost", "Queued 0x0411=0 + EXEC");
+            - delay: 1s
+            # Then turn pump OFF
+            - logger.log:
+                level: INFO
+                tag: antifrost
+                format: "Step 4: Writing 0x0413=0 (pump OFF) + EXEC"
+            - lambda: |-
+                auto *c = id(neopool);
+                c->queue_command(esphome::modbus_controller::ModbusCommandItem::create_write_multiple_command(c, 0x0413, 1, {(uint16_t)0}));
+                c->queue_command(esphome::modbus_controller::ModbusCommandItem::create_write_multiple_command(c, 0x02F5, 1, {(uint16_t)1}));
+                ESP_LOGI("antifrost", "Queued 0x0413=0 + EXEC");
+            - script.execute: refresh_after_change
+            - logger.log:
+                level: INFO
+                tag: antifrost
+                format: "Pump OFF phase done, waiting 15 min..."
+            - delay: 15min
+
+  - id: sync_device_time
+    mode: single
+    then:
+      - lambda: |-
+          auto t = id(ha_time).now();
+          if (!t.is_valid()) {
+            ESP_LOGW("neopool", "HA time not yet available, skipping sync");
+            return;
+          }
+          // Read current device time from registers
+          uint32_t dev_ts = ((uint32_t)(uint16_t)id(device_time_high).state << 16)
+                          | (uint32_t)(uint16_t)id(device_time_low).state;
+          // Build NeoPool "local timestamp" from HA local time
+          // NeoPool stores time so that gmtime(value) = local time
+          struct tm ltm = {};
+          ltm.tm_year = t.year - 1900;
+          ltm.tm_mon  = t.month - 1;
+          ltm.tm_mday = t.day_of_month;
+          ltm.tm_hour = t.hour;
+          ltm.tm_min  = t.minute;
+          ltm.tm_sec  = t.second;
+          time_t ha_local_ts = mktime(&ltm);
+          int32_t diff = (int32_t)ha_local_ts - (int32_t)dev_ts;
+          if (abs(diff) <= 60) {
+            ESP_LOGI("neopool", "Device time in sync (diff %d s)", diff);
+            return;
+          }
+          ESP_LOGI("neopool", "Syncing device time: diff %d s", diff);
+          uint16_t low  = (uint16_t)(ha_local_ts & 0xFFFF);
+          uint16_t high = (uint16_t)((ha_local_ts >> 16) & 0xFFFF);
+          auto *c = id(neopool);
+          // Write time registers, then trigger MBF_ACTION_COPY_TO_RTC (0x04F0)
+          // to copy into the RTC internal clock. NO EEPROM save (0x02F0).
+          c->queue_command(esphome::modbus_controller::ModbusCommandItem::create_write_multiple_command(c, 0x0408, 2, {low, high}));
+          c->queue_command(esphome::modbus_controller::ModbusCommandItem::create_write_multiple_command(c, 0x04F0, 1, {(uint16_t)1}));
+
+# ─── INTERVAL (weekly time sync) ─────────────────────────────────────────
+interval:
+  - interval: 604800s
+    then:
+      - script.execute: sync_device_time
 
