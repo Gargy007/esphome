@@ -30,427 +30,369 @@ views:
                   action: none
                 styles:
                   card:
-                    - height: 265px
+                    - height: 175px
                     - background: var(--card-background-color)
                   state:
                     - font-size: 144px
                     - font-weight: 600
                     - letter-spacing: 4px
                     - color: var(--primary-text-color)
-             
           - type: vertical-stack
             cards:
               - type: weather-forecast
                 entity: weather.forecast_domov
                 show_forecast: true
                 forecast_type: daily
-              # ── Fotovoltaika ──
+              # ── Venkovní teplota + Srážky ──
+              - type: horizontal-stack
+                cards:
+                  - type: custom:button-card
+                    entity: sensor.ws3900a_outdoor_temperature
+                    name: Venkovní teplota
+                    show_name: true
+                    show_state: false
+                    show_icon: true
+                    show_label: true
+                    layout: icon_label
+                    icon: mdi:thermometer
+                    tap_action:
+                      action: more-info
+                    label: |
+                      [[[
+                        const temp = parseFloat(entity.state);
+                        const tempStr = !isNaN(temp) ? temp.toFixed(1) + '°C' : '—';
+                        let tempColor = '#9e9e9e';
+                        if (!isNaN(temp)) {
+                          if (temp >= 25) tempColor = '#f44336';
+                          else if (temp >= 15) tempColor = '#4caf50';
+                          else if (temp >= 5) tempColor = '#ff9800';
+                          else tempColor = '#2196f3';
+                        }
+                        return `<div style="line-height:1.3">
+                          <div style="font-size:24px;font-weight:bold;color:${tempColor}">${tempStr}</div>
+                        </div>`;
+                      ]]]
+                    styles:
+                      card:
+                        - height: 100px
+                        - background: |
+                            [[[
+                              const temp = parseFloat(entity.state);
+                              if (isNaN(temp)) return 'var(--card-background-color)';
+                              if (temp >= 25) return 'linear-gradient(135deg, rgba(244,67,54,0.12) 0%, rgba(244,67,54,0.03) 100%)';
+                              if (temp >= 15) return 'linear-gradient(135deg, rgba(76,175,80,0.12) 0%, rgba(76,175,80,0.03) 100%)';
+                              if (temp >= 5) return 'linear-gradient(135deg, rgba(255,152,0,0.12) 0%, rgba(255,152,0,0.03) 100%)';
+                              return 'linear-gradient(135deg, rgba(33,150,243,0.12) 0%, rgba(33,150,243,0.03) 100%)';
+                            ]]]
+                      icon:
+                        - width: 40px
+                        - color: |
+                            [[[
+                              const temp = parseFloat(entity.state);
+                              if (isNaN(temp)) return '#9e9e9e';
+                              if (temp >= 25) return '#f44336';
+                              if (temp >= 15) return '#4caf50';
+                              if (temp >= 5) return '#ff9800';
+                              return '#2196f3';
+                            ]]]
+                      label:
+                        - text-align: left
+                        - padding: 0
+                      name:
+                        - font-size: 11px
+                  - type: custom:button-card
+                    entity: sensor.ws3900a_rain_rate
+                    name: Srážky
+                    show_name: true
+                    show_state: false
+                    show_icon: true
+                    show_label: true
+                    layout: icon_label
+                    icon: mdi:weather-pouring
+                    tap_action:
+                      action: more-info
+                    label: |
+                      [[[
+                        const rate = parseFloat(entity.state);
+                        const rateStr = !isNaN(rate) ? rate.toFixed(1) + ' mm/h' : '—';
+                        let rateColor = '#9e9e9e';
+                        if (!isNaN(rate)) {
+                          if (rate >= 10) rateColor = '#f44336';
+                          else if (rate >= 2) rateColor = '#ff9800';
+                          else if (rate > 0) rateColor = '#2196f3';
+                        }
+                        const daily = parseFloat(states['sensor.ws3900a_daily_rain'].state);
+                        const dailyStr = !isNaN(daily) ? daily.toFixed(1) + ' mm' : '';
+                        return `<div style="line-height:1.3">
+                          <div style="font-size:22px;font-weight:bold;color:${rateColor}">${rateStr}</div>
+                          <div style="font-size:10px;color:var(--secondary-text-color);margin-top:2px">${dailyStr ? 'Dnes: ' + dailyStr : ''}</div>
+                        </div>`;
+                      ]]]
+                    styles:
+                      card:
+                        - height: 100px
+                        - background: |
+                            [[[
+                              const rate = parseFloat(entity.state);
+                              if (!isNaN(rate) && rate > 0) return 'linear-gradient(135deg, rgba(33,150,243,0.12) 0%, rgba(33,150,243,0.03) 100%)';
+                              return 'var(--card-background-color)';
+                            ]]]
+                      icon:
+                        - width: 40px
+                        - color: |
+                            [[[
+                              const rate = parseFloat(entity.state);
+                              if (isNaN(rate) || rate === 0) return '#9e9e9e';
+                              if (rate >= 10) return '#f44336';
+                              if (rate >= 2) return '#ff9800';
+                              return '#2196f3';
+                            ]]]
+                      label:
+                        - text-align: left
+                        - padding: 0
+                      name:
+                        - font-size: 11px
+              # ── Vlhkost + Rosný bod ──
+              - type: horizontal-stack
+                cards:
+                  - type: custom:button-card
+                    entity: sensor.ws3900a_humidity
+                    name: Vlhkost
+                    show_name: true
+                    show_state: true
+                    show_icon: true
+                    icon: mdi:water-percent
+                    layout: icon_state_name2nd
+                    tap_action:
+                      action: more-info
+                    styles:
+                      card:
+                        - height: 100px
+                      state:
+                        - font-size: 24px
+                        - font-weight: bold
+                        - color: |
+                            [[[
+                              const v = parseFloat(entity.state);
+                              if (isNaN(v)) return '#9e9e9e';
+                              if (v >= 70) return '#2196f3';
+                              if (v >= 40) return '#4caf50';
+                              return '#ff9800';
+                            ]]]
+                      icon:
+                        - width: 48px
+                        - color: |
+                            [[[
+                              const v = parseFloat(entity.state);
+                              if (isNaN(v)) return '#9e9e9e';
+                              if (v >= 70) return '#2196f3';
+                              if (v >= 40) return '#4caf50';
+                              return '#ff9800';
+                            ]]]
+                  - type: custom:button-card
+                    entity: sensor.ws3900a_dewpoint
+                    name: Rosný bod
+                    show_name: true
+                    show_state: true
+                    show_icon: true
+                    icon: mdi:thermometer-water
+                    layout: icon_state_name2nd
+                    tap_action:
+                      action: more-info
+                    styles:
+                      card:
+                        - height: 100px
+                      state:
+                        - font-size: 24px
+                        - font-weight: bold
+                        - color: '#607d8b'
+                      icon:
+                        - width: 48px
+                        - color: '#607d8b'
+              # ── Vítr + Tlak ──
+              - type: horizontal-stack
+                cards:
+                  - type: custom:button-card
+                    entity: sensor.ws3900a_wind_speed
+                    name: Vítr
+                    show_name: true
+                    show_state: false
+                    show_icon: true
+                    show_label: true
+                    icon: mdi:weather-windy
+                    layout: icon_label
+                    tap_action:
+                      action: more-info
+                    label: |
+                      [[[
+                        const speed = parseFloat(entity.state);
+                        const gust = parseFloat(states['sensor.ws3900a_wind_gust'].state);
+                        const dir = parseFloat(states['sensor.ws3900a_wind_direction'].state);
+                        const speedStr = !isNaN(speed) ? speed.toFixed(1) + ' km/h' : '—';
+                        const dirs = ['S','SSV','SV','VSV','V','VJV','JV','JJV','J','JJZ','JZ','ZJZ','Z','ZSZ','SZ','SSZ'];
+                        const dirStr = !isNaN(dir) ? dirs[Math.round(dir / 22.5) % 16] : '—';
+                        let speedColor = '#9e9e9e';
+                        if (!isNaN(speed)) {
+                          if (speed >= 40) speedColor = '#f44336';
+                          else if (speed >= 20) speedColor = '#ff9800';
+                          else if (speed > 0) speedColor = '#4caf50';
+                        }
+                        const gustStr = !isNaN(gust) ? '⬆' + gust.toFixed(0) : '';
+                        return `<div style="line-height:1.3">
+                          <div style="font-size:22px;font-weight:bold;color:${speedColor}">${speedStr}</div>
+                          <div style="font-size:10px;color:var(--secondary-text-color);margin-top:2px">${dirStr} ${gustStr}</div>
+                        </div>`;
+                      ]]]
+                    styles:
+                      card:
+                        - height: 100px
+                      icon:
+                        - width: 40px
+                        - color: |
+                            [[[
+                              const speed = parseFloat(entity.state);
+                              if (isNaN(speed) || speed === 0) return '#9e9e9e';
+                              if (speed >= 40) return '#f44336';
+                              if (speed >= 20) return '#ff9800';
+                              return '#4caf50';
+                            ]]]
+                      label:
+                        - text-align: left
+                        - padding: 0
+                      name:
+                        - font-size: 11px
+                  - type: custom:button-card
+                    entity: sensor.ws3900a_relative_pressure
+                    name: Tlak
+                    show_name: true
+                    show_state: true
+                    show_icon: true
+                    icon: mdi:gauge
+                    layout: icon_state_name2nd
+                    tap_action:
+                      action: more-info
+                    styles:
+                      card:
+                        - height: 100px
+                      state:
+                        - font-size: 20px
+                        - font-weight: bold
+                        - color: '#607d8b'
+                      icon:
+                        - width: 40px
+                        - color: '#607d8b'
+                      name:
+                        - font-size: 11px
+              # ── UV Index + Sluneční záření ──
+              - type: horizontal-stack
+                cards:
+                  - type: custom:button-card
+                    entity: sensor.ws3900a_uv_index
+                    name: UV Index
+                    show_name: true
+                    show_state: true
+                    show_icon: true
+                    icon: mdi:sun-wireless
+                    layout: icon_state_name2nd
+                    tap_action:
+                      action: more-info
+                    styles:
+                      card:
+                        - height: 100px
+                      state:
+                        - font-size: 24px
+                        - font-weight: bold
+                        - color: |
+                            [[[
+                              const v = parseFloat(entity.state);
+                              if (isNaN(v) || v === 0) return '#9e9e9e';
+                              if (v >= 8) return '#f44336';
+                              if (v >= 6) return '#ff9800';
+                              if (v >= 3) return '#ffb300';
+                              return '#4caf50';
+                            ]]]
+                      icon:
+                        - width: 48px
+                        - color: |
+                            [[[
+                              const v = parseFloat(entity.state);
+                              if (isNaN(v) || v === 0) return '#9e9e9e';
+                              if (v >= 8) return '#f44336';
+                              if (v >= 6) return '#ff9800';
+                              if (v >= 3) return '#ffb300';
+                              return '#4caf50';
+                            ]]]
+                  - type: custom:button-card
+                    entity: sensor.ws3900a_solar_radiation
+                    name: Záření
+                    show_name: true
+                    show_state: true
+                    show_icon: true
+                    icon: mdi:white-balance-sunny
+                    layout: icon_state_name2nd
+                    tap_action:
+                      action: more-info
+                    styles:
+                      card:
+                        - height: 100px
+                      state:
+                        - font-size: 24px
+                        - font-weight: bold
+                        - color: |
+                            [[[
+                              const v = parseFloat(entity.state);
+                              if (isNaN(v) || v === 0) return '#9e9e9e';
+                              if (v > 500) return '#ff9800';
+                              if (v > 200) return '#ffb300';
+                              return '#607d8b';
+                            ]]]
+                      icon:
+                        - width: 48px
+                        - color: |
+                            [[[
+                              const v = parseFloat(entity.state);
+                              if (isNaN(v) || v === 0) return '#9e9e9e';
+                              if (v > 500) return '#ff9800';
+                              if (v > 200) return '#ffb300';
+                              return '#607d8b';
+                            ]]]
+              # ── Pocitová teplota ──
               - type: custom:button-card
-                entity: sensor.solax_pv_power
-                show_name: false
-                show_state: false
+                entity: sensor.ws3900a_feels_like_temperature
+                name: Pocitová teplota
+                show_name: true
+                show_state: true
                 show_icon: true
-                show_label: true
-                layout: icon_label
-                icon: mdi:solar-power-variant
+                icon: mdi:thermometer-lines
+                layout: icon_state_name2nd
                 tap_action:
-                  action: navigate
-                  navigation_path: /dashboard-wallboard/fotovoltaika
-                custom_fields:
-                  bar: |
-                    [[[
-                      const v = parseFloat(entity.state) || 0;
-                      const pct = Math.max(0, Math.min(v / 12000 * 100, 100));
-                      let color = '#9e9e9e';
-                      if (v > 2000) color = '#4caf50';
-                      else if (v > 500) color = '#ff9800';
-                      else if (v > 0) color = '#f44336';
-                      return `<div style="width:100%;height:12px;border-radius:6px;background:rgba(255,255,255,0.08);overflow:hidden">
-                        <div style="width:${pct}%;height:100%;border-radius:6px;background:${color};transition:width 0.5s ease"></div>
-                      </div><div style="display:flex;justify-content:space-between;font-size:9px;color:var(--secondary-text-color);margin-top:2px"><span>0</span><span>12 kW</span></div>`;
-                    ]]]
-                label: |
-                  [[[
-                    const pv = parseFloat(entity.state) || 0;
-                    const bat = parseFloat(states['sensor.solax_srtr36bbae_battery_remaining_capacity'].state) || 0;
-                    const grid = parseFloat(states['sensor.solax_srtr36bbae_grid_power'].state) || 0;
-                    const pvStr = pv >= 1000 ? (pv/1000).toFixed(1) + ' kW' : Math.round(pv) + ' W';
-                    const gridStr = grid > 0 ? '↑' + Math.round(grid) + ' W' : grid < 0 ? '↓' + Math.round(Math.abs(grid)) + ' W' : '—';
-                    const pvColor = pv > 2000 ? '#4caf50' : pv > 500 ? '#ff9800' : '#9e9e9e';
-                    return `<div style="line-height:1.3">
-                      <div style="font-size:13px;font-weight:600;margin-bottom:2px">Fotovoltaika</div>
-                      <div style="font-size:26px;font-weight:bold;color:${pvColor}">${pvStr}</div>
-                      <div style="font-size:11px;color:var(--secondary-text-color);margin-top:4px">🔋 ${Math.round(bat)}%  🔌 ${gridStr}</div>
-                    </div>`;
-                  ]]]
+                  action: more-info
                 styles:
                   card:
-                    - height: 130px
-                    - background: |
-                        [[[
-                          const pv = parseFloat(entity.state) || 0;
-                          if (pv > 2000) return 'linear-gradient(135deg, rgba(76,175,80,0.15) 0%, rgba(76,175,80,0.03) 100%)';
-                          if (pv > 500) return 'linear-gradient(135deg, rgba(255,152,0,0.12) 0%, rgba(255,152,0,0.03) 100%)';
-                          return 'var(--card-background-color)';
-                        ]]]
-                  icon:
-                    - width: 56px
+                    - height: 80px
+                  state:
+                    - font-size: 22px
+                    - font-weight: bold
                     - color: |
                         [[[
-                          const pv = parseFloat(entity.state) || 0;
-                          if (pv > 2000) return '#4caf50';
-                          if (pv > 500) return '#ff9800';
-                          return '#9e9e9e';
-                        ]]]
-                  label:
-                    - text-align: left
-                    - padding: 0
-                  custom_fields:
-                    bar:
-                      - padding: 0 16px 8px
-                      - position: absolute
-                      - bottom: 0
-                      - left: 0
-                      - right: 0
-                      - width: calc(100% - 32px)
-                  grid:
-                    - padding-bottom: 35px
-              # ── Bazén ──
-              - type: custom:button-card
-                entity: sensor.tcp_modbus_pool_water_temperature
-                show_name: false
-                show_state: false
-                show_icon: true
-                show_label: true
-                layout: icon_label
-                icon: mdi:pool
-                tap_action:
-                  action: navigate
-                  navigation_path: /dashboard-wallboard/bazen
-                custom_fields:
-                  bar: |
-                    [[[
-                      const v = parseFloat(entity.state) || 0;
-                      const pct = Math.max(0, Math.min((v - 5) / 27 * 100, 100));
-                      const pump = states['binary_sensor.bazen_modbus_filtration_pump'].state === 'on';
-                      let color = '#9e9e9e';
-                      if (pump) { color = v >= 26 ? '#4caf50' : v >= 22 ? '#ff9800' : '#2196f3'; }
-                      return `<div style="width:100%;height:12px;border-radius:6px;background:rgba(255,255,255,0.08);overflow:hidden">
-                        <div style="width:${pct}%;height:100%;border-radius:6px;background:${color};transition:width 0.5s ease"></div>
-                      </div><div style="display:flex;justify-content:space-between;font-size:9px;color:var(--secondary-text-color);margin-top:2px"><span>5°C</span><span>32°C</span></div>`;
-                    ]]]
-                label: |
-                  [[[
-                    const temp = parseFloat(entity.state);
-                    const tempStr = !isNaN(temp) ? temp.toFixed(1) + '°C' : '—';
-                    const err = states['binary_sensor.bazen_modbus_pool_error'].state === 'on';
-                    const errList = states['sensor.bazen_modbus_pool_error_list'].state || '';
-                    const pump = states['binary_sensor.bazen_modbus_filtration_pump'].state === 'on';
-                    const ph = parseFloat(states['sensor.bazen_modbus_ph_level'].state);
-                    const tempColor = !isNaN(temp) && temp >= 24 ? '#4caf50' : !isNaN(temp) && temp >= 18 ? '#ff9800' : '#2196f3';
-                    let status = '';
-                    if (err && !errList.includes('BOOST') && !errList.includes('AntiFrost')) {
-                      status = '<span style="color:#f44336">⚠️ ' + errList + '</span>';
-                    } else {
-                      let p = [];
-                      if (!isNaN(ph) && pump) p.push('pH ' + ph.toFixed(1));
-                      p.push(pump ? '✅ Filtrace' : '⏸️ Klid');
-                      status = p.join('  ');
-                    }
-                    return `<div style="line-height:1.3">
-                      <div style="font-size:13px;font-weight:600;margin-bottom:2px">Bazén</div>
-                      <div style="font-size:26px;font-weight:bold;color:${tempColor}">${tempStr}</div>
-                      <div style="font-size:11px;color:var(--secondary-text-color);margin-top:4px">${status}</div>
-                    </div>`;
-                  ]]]
-                styles:
-                  card:
-                    - height: 130px
-                    - background: |
-                        [[[
-                          const err = states['binary_sensor.bazen_modbus_pool_error'].state === 'on';
-                          const errList = states['sensor.bazen_modbus_pool_error_list'].state || '';
-                          if (err && !errList.includes('BOOST') && !errList.includes('AntiFrost')) return 'linear-gradient(135deg, rgba(244,67,54,0.15) 0%, rgba(244,67,54,0.03) 100%)';
-                          const pump = states['binary_sensor.bazen_modbus_filtration_pump'].state === 'on';
-                          if (pump) return 'linear-gradient(135deg, rgba(33,150,243,0.12) 0%, rgba(33,150,243,0.03) 100%)';
-                          return 'var(--card-background-color)';
+                          const v = parseFloat(entity.state);
+                          if (isNaN(v)) return '#9e9e9e';
+                          if (v >= 25) return '#f44336';
+                          if (v >= 15) return '#4caf50';
+                          if (v >= 5) return '#ff9800';
+                          return '#2196f3';
                         ]]]
                   icon:
-                    - width: 56px
+                    - width: 48px
                     - color: |
                         [[[
-                          const err = states['binary_sensor.bazen_modbus_pool_error'].state === 'on';
-                          const errList = states['sensor.bazen_modbus_pool_error_list'].state || '';
-                          if (err && !errList.includes('BOOST') && !errList.includes('AntiFrost')) return '#f44336';
-                          const pump = states['binary_sensor.bazen_modbus_filtration_pump'].state === 'on';
-                          if (pump) return '#2196f3';
-                          return '#9e9e9e';
+                          const v = parseFloat(entity.state);
+                          if (isNaN(v)) return '#9e9e9e';
+                          if (v >= 25) return '#f44336';
+                          if (v >= 15) return '#4caf50';
+                          if (v >= 5) return '#ff9800';
+                          return '#2196f3';
                         ]]]
-                  label:
-                    - text-align: left
-                    - padding: 0
-                  custom_fields:
-                    bar:
-                      - padding: 0 16px 8px
-                      - position: absolute
-                      - bottom: 0
-                      - left: 0
-                      - right: 0
-                      - width: calc(100% - 32px)
-                  grid:
-                    - padding-bottom: 35px
-               # ── Topení + VZT ──
-              - type: custom:button-card
-                entity: sensor.atrea_vzt_control_vzt_aktualni_rezim
-                show_name: false
-                show_state: false
-                show_icon: true
-                show_label: true
-                layout: icon_label
-                icon: mdi:home-thermometer
-                tap_action:
-                  action: navigate
-                  navigation_path: /dashboard-wallboard/domov
-                custom_fields:
-                  bar: |
-                    [[[
-                      const klimat = states['climate.domaci_topeni'];
-                      const v = klimat ? parseFloat(klimat.attributes.current_temperature) || 20 : 20;
-                      const pct = Math.max(0, Math.min((v - 15) / 13 * 100, 100));
-                      let color = '#9e9e9e';
-                      if (v >= 21 && v <= 24) color = '#4caf50';
-                      else if (v >= 19) color = '#ff9800';
-                      else color = '#2196f3';
-                      return `<div style="width:100%;height:12px;border-radius:6px;background:rgba(255,255,255,0.08);overflow:hidden">
-                        <div style="width:${pct}%;height:100%;border-radius:6px;background:${color};transition:width 0.5s ease"></div>
-                      </div><div style="display:flex;justify-content:space-between;font-size:9px;color:var(--secondary-text-color);margin-top:2px"><span>15°C</span><span>28°C</span></div>`;
-                    ]]]
-                label: |
-                  [[[
-                    const havarie = states['binary_sensor.kotelna_regulator_plyn_havarie'].state === 'on';
-                    const vzt = entity.state;
-                    const klimat = states['climate.domaci_topeni'];
-                    const temp = klimat ? parseFloat(klimat.attributes.current_temperature) : null;
-                    const tempStr = temp != null ? (Math.round(temp * 10) / 10) + '°C' : '—';
-                    const tempColor = temp >= 21 && temp <= 24 ? '#4caf50' : temp >= 19 ? '#ff9800' : '#2196f3';
-                    if (havarie) return `<div style="line-height:1.3">
-                      <div style="font-size:13px;font-weight:600;margin-bottom:2px">Topení + VZT</div>
-                      <div style="font-size:26px;font-weight:bold;color:#f44336">${tempStr}</div>
-                      <div style="font-size:11px;color:#f44336;margin-top:4px">⚠️ HAVÁRIE kotle!</div>
-                    </div>`;
-                    let parts = [];
-                    const kotelStav = states['sensor.kotelna_regulator_plyn_stav'].state;
-                    const topi = kotelStav && kotelStav !== 'Klid' && kotelStav !== 'Vypnutý' && kotelStav !== 'unknown' && kotelStav !== 'unavailable';
-                    if (topi) parts.push('🔥 ' + kotelStav);
-                    if (vzt === 'Nárazové větrání' || vzt === 'Větrání (Profuk)') parts.push('💨 Větrá');
-                    else if (vzt === 'Pouze Topení') parts.push('🔥 VZT topí');
-                    return `<div style="line-height:1.3">
-                      <div style="font-size:13px;font-weight:600;margin-bottom:2px">Topení + VZT</div>
-                      <div style="font-size:26px;font-weight:bold;color:${tempColor}">${tempStr}</div>
-                      <div style="font-size:11px;color:var(--secondary-text-color);margin-top:4px">${parts.join('  ') || 'Klid'}</div>
-                    </div>`;
-                  ]]]
-                styles:
-                  card:
-                    - height: 130px
-                    - background: |
-                        [[[
-                          const havarie = states['binary_sensor.kotelna_regulator_plyn_havarie'].state === 'on';
-                          if (havarie) return 'linear-gradient(135deg, rgba(244,67,54,0.2) 0%, rgba(244,67,54,0.03) 100%)';
-                          const kotelStav = states['sensor.kotelna_regulator_plyn_stav'].state;
-                          const topi = kotelStav && kotelStav !== 'Klid' && kotelStav !== 'Vypnutý' && kotelStav !== 'unknown' && kotelStav !== 'unavailable';
-                          if (topi) return 'linear-gradient(135deg, rgba(252,174,30,0.12) 0%, rgba(252,174,30,0.03) 100%)';
-                          return 'var(--card-background-color)';
-                        ]]]
-                  icon:
-                    - width: 56px
-                    - color: |
-                        [[[
-                          const havarie = states['binary_sensor.kotelna_regulator_plyn_havarie'].state === 'on';
-                          if (havarie) return '#f44336';
-                          const kotelStav = states['sensor.kotelna_regulator_plyn_stav'].state;
-                          const topi = kotelStav && kotelStav !== 'Klid' && kotelStav !== 'Vypnutý' && kotelStav !== 'unknown' && kotelStav !== 'unavailable';
-                          if (topi) return '#fcae1e';
-                          const vzt = entity.state;
-                          if (vzt === 'Nárazové větrání' || vzt === 'Větrání (Profuk)') return '#2196f3';
-                          return '#9e9e9e';
-                        ]]]
-                  label:
-                    - text-align: left
-                    - padding: 0
-                  custom_fields:
-                    bar:
-                      - padding: 0 16px 8px
-                      - position: absolute
-                      - bottom: 0
-                      - left: 0
-                      - right: 0
-                      - width: calc(100% - 32px)
-                  grid:
-                    - padding-bottom: 35px
-              # ── Rolety ──
-              - type: custom:button-card
-                entity: cover.okna_terasa
-                show_name: false
-                show_state: false
-                show_icon: true
-                show_label: true
-                layout: icon_label
-                icon: mdi:window-shutter
-                tap_action:
-                  action: navigate
-                  navigation_path: /dashboard-wallboard/rolety
-                label: |
-                  [[[
-                    const covers = [
-                      { name: 'Dveře', e: states['cover.terasa_dvere'] },
-                      { name: 'Okna', e: states['cover.okna_terasa'] },
-                      { name: 'Kuchyň', e: states['cover.kuchyn_roleta_roleta'] }
-                    ];
-                    const open = covers.filter(c => c.e && c.e.state === 'open').length;
-                    const mainText = open === 0 ? 'Vše zavřeno' : open === 3 ? 'Vše otevřeno' : open + '× otevřeno';
-                    const mainColor = open === 0 ? '#9e9e9e' : '#4caf50';
-                    const detail = covers.map(c => {
-                      if (!c.e) return '';
-                      const pos = c.e.attributes.current_position;
-                      return pos != null ? c.name + ' ' + pos + '%' : c.name + (c.e.state === 'open' ? ' ↑' : ' ↓');
-                    }).filter(s => s).join('  ');
-                    return `<div style="line-height:1.3">
-                      <div style="font-size:13px;font-weight:600;margin-bottom:2px">Rolety</div>
-                      <div style="font-size:22px;font-weight:bold;color:${mainColor}">${mainText}</div>
-                      <div style="font-size:11px;color:var(--secondary-text-color);margin-top:4px">${detail}</div>
-                    </div>`;
-                  ]]]
-                styles:
-                  card:
-                    - height: 90px
-                    - background: |
-                        [[[
-                          const covers = ['cover.terasa_dvere', 'cover.okna_terasa', 'cover.kuchyn_roleta_roleta'];
-                          const open = covers.filter(c => states[c] && states[c].state === 'open').length;
-                          if (open > 0) return 'linear-gradient(135deg, rgba(76,175,80,0.12) 0%, rgba(76,175,80,0.03) 100%)';
-                          return 'var(--card-background-color)';
-                        ]]]
-                  icon:
-                    - width: 56px
-                    - color: |
-                        [[[
-                          const covers = ['cover.terasa_dvere', 'cover.okna_terasa', 'cover.kuchyn_roleta_roleta'];
-                          const open = covers.filter(c => states[c] && states[c].state === 'open').length;
-                          return open > 0 ? '#4caf50' : '#9e9e9e';
-                        ]]]
-                  label:
-                    - text-align: left
-                    - padding: 0
-              # ── Zahrada ──
-              - type: custom:button-card
-                entity: light.jezirko_cerpadlo_vodopad
-                show_name: false
-                show_state: false
-                show_icon: true
-                show_label: true
-                layout: icon_label
-                icon: mdi:flower
-                tap_action:
-                  action: navigate
-                  navigation_path: /dashboard-wallboard/zahrada
-                label: |
-                  [[[
-                    const vodopad = states['light.jezirko_cerpadlo_vodopad'];
-                    const potok = states['light.jezirko_cerpadlo_filtr'];
-                    const uv = states['light.jezirko_uv_lampa'];
-                    const osv = states['light.jezirko_osvetleni'];
-                    const on = [vodopad, potok, uv, osv].filter(e => e && e.state === 'on').length;
-                    const mainText = on === 0 ? 'Vše vypnuto' : on + '× zapnuto';
-                    const mainColor = on === 0 ? '#9e9e9e' : '#4caf50';
-                    let detail = [];
-                    if (vodopad && vodopad.state === 'on') detail.push('💧 Vodopád');
-                    if (potok && potok.state === 'on') detail.push('🌊 Potok');
-                    if (uv && uv.state === 'on') detail.push('🔆 UV');
-                    if (osv && osv.state === 'on') detail.push('💡 Světlo');
-                    return `<div style="line-height:1.3">
-                      <div style="font-size:13px;font-weight:600;margin-bottom:2px">Zahrada</div>
-                      <div style="font-size:22px;font-weight:bold;color:${mainColor}">${mainText}</div>
-                      <div style="font-size:11px;color:var(--secondary-text-color);margin-top:4px">${detail.join('  ') || 'Jezírko v klidu'}</div>
-                    </div>`;
-                  ]]]
-                styles:
-                  card:
-                    - height: 90px
-                    - background: |
-                        [[[
-                          const items = ['light.jezirko_cerpadlo_vodopad', 'light.jezirko_cerpadlo_filtr', 'light.jezirko_uv_lampa', 'light.jezirko_osvetleni'];
-                          const on = items.filter(e => states[e] && states[e].state === 'on').length;
-                          if (on > 0) return 'linear-gradient(135deg, rgba(76,175,80,0.12) 0%, rgba(76,175,80,0.03) 100%)';
-                          return 'var(--card-background-color)';
-                        ]]]
-                  icon:
-                    - width: 56px
-                    - color: |
-                        [[[
-                          const items = ['light.jezirko_cerpadlo_vodopad', 'light.jezirko_cerpadlo_filtr', 'light.jezirko_uv_lampa', 'light.jezirko_osvetleni'];
-                          const on = items.filter(e => states[e] && states[e].state === 'on').length;
-                          return on > 0 ? '#4caf50' : '#9e9e9e';
-                        ]]]
-                  label:
-                    - text-align: left
-                    - padding: 0
-              # ── Sekačka ──
-              - type: custom:button-card
-                entity: lawn_mower.zerik
-                show_name: false
-                show_state: false
-                show_icon: true
-                show_label: true
-                layout: icon_label
-                icon: mdi:robot-mower
-                tap_action:
-                  action: navigate
-                  navigation_path: /dashboard-wallboard/sekacka
-                label: |
-                  [[[
-                    const stav = entity.state;
-                    const bat = parseFloat(states['sensor.zerik_baterie'].state) || 0;
-                    const postup = parseFloat(states['sensor.zerik_postup'].state) || 0;
-                    let stavText = stav;
-                    let stavColor = '#9e9e9e';
-                    if (stav === 'mowing') { stavText = 'Seče'; stavColor = '#4caf50'; }
-                    else if (stav === 'docked') { stavText = 'V doku'; stavColor = '#2196f3'; }
-                    else if (stav === 'paused') { stavText = 'Pauza'; stavColor = '#ff9800'; }
-                    else if (stav === 'returning') { stavText = 'Vrací se'; stavColor = '#9c27b0'; }
-                    else if (stav === 'error') { stavText = 'Chyba!'; stavColor = '#f44336'; }
-                    let detail = '🔋 ' + Math.round(bat) + '%';
-                    if (stav === 'mowing' && postup > 0) detail += '  📊 ' + Math.round(postup) + '%';
-                    return `<div style="line-height:1.3">
-                      <div style="font-size:13px;font-weight:600;margin-bottom:2px">Sekačka</div>
-                      <div style="font-size:22px;font-weight:bold;color:${stavColor}">${stavText}</div>
-                      <div style="font-size:11px;color:var(--secondary-text-color);margin-top:4px">${detail}</div>
-                    </div>`;
-                  ]]]
-                styles:
-                  card:
-                    - height: 90px
-                    - background: |
-                        [[[
-                          const s = entity.state;
-                          if (s === 'mowing') return 'linear-gradient(135deg, rgba(76,175,80,0.12) 0%, rgba(76,175,80,0.03) 100%)';
-                          if (s === 'error') return 'linear-gradient(135deg, rgba(244,67,54,0.15) 0%, rgba(244,67,54,0.03) 100%)';
-                          return 'var(--card-background-color)';
-                        ]]]
-                  icon:
-                    - width: 56px
-                    - color: |
-                        [[[
-                          const s = entity.state;
-                          if (s === 'mowing') return '#4caf50';
-                          if (s === 'docked') return '#2196f3';
-                          if (s === 'paused') return '#ff9800';
-                          if (s === 'error') return '#f44336';
-                          return '#9e9e9e';
-                        ]]]
-                  label:
-                    - text-align: left
-                    - padding: 0
             view_layout:
               grid-column: 2
   - type: panel
@@ -946,19 +888,21 @@ views:
                     tap_action:
                       action: more-info
                     styles:
+                      icon:
+                        - color: |
+                            [[[
+                              const spinac = entity.state === 'on';
+                              const aux4 = states['binary_sensor.bazen_modbus_aux4_state'].state === 'on';
+                              return (spinac && aux4) ? '#fcae1e' : 'var(--disabled-text-color)';
+                            ]]]
                       card:
                         - height: 100px
-                    state:
-                      - value: 'on'
-                        styles:
-                          icon:
-                            - color: '#fcae1e'
-                      - value: 'off'
-                        styles:
-                          icon:
-                            - color: var(--disabled-text-color)
-                          card:
-                            - opacity: 0.6
+                        - opacity: |
+                            [[[
+                              const spinac = entity.state === 'on';
+                              const aux4 = states['binary_sensor.bazen_modbus_aux4_state'].state === 'on';
+                              return (spinac && aux4) ? '1' : '0.5';
+                            ]]]
                   - type: custom:button-card
                     entity: number.topeni_do_bazenu_teplota
                     name: Cílová teplota
@@ -1260,96 +1204,6 @@ views:
                             - animation: rotating 2s linear infinite
                       - value: 'off'
                         icon: mdi:pump-off
-                        styles:
-                          icon:
-                            - color: var(--disabled-text-color)
-                          card:
-                            - opacity: 0.6
-              - type: horizontal-stack
-                cards:
-                  - type: custom:button-card
-                    entity: binary_sensor.bazen_modbus_aux1_state
-                    name: AUX1
-                    show_name: true
-                    show_state: false
-                    show_icon: true
-                    styles:
-                      card:
-                        - height: 80px
-                    state:
-                      - value: 'on'
-                        icon: mdi:electric-switch-closed
-                        styles:
-                          icon:
-                            - color: '#4caf50'
-                      - value: 'off'
-                        icon: mdi:electric-switch
-                        styles:
-                          icon:
-                            - color: var(--disabled-text-color)
-                          card:
-                            - opacity: 0.6
-                  - type: custom:button-card
-                    entity: binary_sensor.bazen_modbus_aux2_state
-                    name: AUX2
-                    show_name: true
-                    show_state: false
-                    show_icon: true
-                    styles:
-                      card:
-                        - height: 80px
-                    state:
-                      - value: 'on'
-                        icon: mdi:electric-switch-closed
-                        styles:
-                          icon:
-                            - color: '#4caf50'
-                      - value: 'off'
-                        icon: mdi:electric-switch
-                        styles:
-                          icon:
-                            - color: var(--disabled-text-color)
-                          card:
-                            - opacity: 0.6
-                  - type: custom:button-card
-                    entity: binary_sensor.bazen_modbus_aux3_state
-                    name: AUX3
-                    show_name: true
-                    show_state: false
-                    show_icon: true
-                    styles:
-                      card:
-                        - height: 80px
-                    state:
-                      - value: 'on'
-                        icon: mdi:electric-switch-closed
-                        styles:
-                          icon:
-                            - color: '#4caf50'
-                      - value: 'off'
-                        icon: mdi:electric-switch
-                        styles:
-                          icon:
-                            - color: var(--disabled-text-color)
-                          card:
-                            - opacity: 0.6
-                  - type: custom:button-card
-                    entity: binary_sensor.bazen_modbus_aux4_state
-                    name: AUX4
-                    show_name: true
-                    show_state: false
-                    show_icon: true
-                    styles:
-                      card:
-                        - height: 80px
-                    state:
-                      - value: 'on'
-                        icon: mdi:electric-switch-closed
-                        styles:
-                          icon:
-                            - color: '#4caf50'
-                      - value: 'off'
-                        icon: mdi:electric-switch
                         styles:
                           icon:
                             - color: var(--disabled-text-color)
@@ -1929,8 +1783,8 @@ views:
             view_layout:
               grid-column: 2
   - type: panel
-    path: rolety
-    title: Rolety
+    path: rolety-a-vrata
+    title: Rolety a vrata
     cards:
       - type: custom:layout-card
         layout_type: custom:grid-layout
@@ -2109,6 +1963,56 @@ views:
                       - width: calc(100% - 32px)
                   grid:
                     - padding-bottom: 35px
+              # ── Garážová vrata ──
+              - type: custom:button-card
+                entity: binary_sensor.garazove_vrata_door_state
+                name: Garážová vrata
+                show_name: true
+                show_state: false
+                show_icon: true
+                show_label: true
+                layout: icon_label
+                tap_action:
+                  action: call-service
+                  service: script.turn_on
+                  service_data:
+                    entity_id: script.garage_door_secure_trigger
+                  confirmation:
+                    text: Opravdu chcete otevřít/zavřít garážová vrata?
+                hold_action:
+                  action: more-info
+                label: |
+                  [[[
+                    const open = entity.state === 'on';
+                    const stavText = open ? 'Otevřeno' : 'Zavřeno';
+                    const stavColor = open ? '#4caf50' : '#9e9e9e';
+                    return `<div style="line-height:1.3">
+                      <div style="font-size:26px;font-weight:bold;color:${stavColor}">${stavText}</div>
+                      <div style="font-size:11px;color:var(--secondary-text-color);margin-top:4px">Klepněte pro otevření/zavření</div>
+                    </div>`;
+                  ]]]
+                styles:
+                  card:
+                    - height: 140px
+                    - background: |
+                        [[[
+                          if (entity.state === 'on') return 'linear-gradient(135deg, rgba(76,175,80,0.15) 0%, rgba(76,175,80,0.03) 100%)';
+                          return 'var(--card-background-color)';
+                        ]]]
+                  icon:
+                    - width: 56px
+                    - color: |
+                        [[[
+                          return entity.state === 'on' ? '#4caf50' : '#9e9e9e';
+                        ]]]
+                  label:
+                    - text-align: left
+                    - padding: 0
+                state:
+                  - value: 'on'
+                    icon: mdi:garage-open-variant
+                  - value: 'off'
+                    icon: mdi:garage-variant
             view_layout:
               grid-column: 2
   - type: panel
