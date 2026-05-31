@@ -31,8 +31,8 @@
 # ║  AUX1–AUX4 State           ║  0x010E b3–6║  stav AUX relé                ║
 # ║  pH OK / Control / Pump    ║  0x0107     ║  bity stavu pH modulu         ║
 # ║  Hydrolysis On Target      ║  0x010D b0  ║  elektrolýza na setpointu     ║
-# ║  Hydrolysis Low Flow       ║  0x010D b1  ║  problém průtoku (alarm)      ║
-# ║  Hydrolysis Module Active  ║  0x010D b9  ║  modul elektrolýzy aktivní    ║
+# ║  Hydrolysis Low Flow       ║  0x010D b3  ║  FL1 paddle switch (invertováno)║
+# ║  Hydrolysis Module Active  ║  0x010D b5  ║  modul elektrolýzy aktivní    ║
 # ╠════════════════════════════╩═════════════╩═══════════════════════════════╣
 # ║  OVLÁDÁNÍ / AKTUÁTORY                                                    ║
 # ╠════════════════════════════╦═════════════╦═══════════════════════════════╣
@@ -130,6 +130,14 @@ globals:
     initial_value: 'false'
   - id: filtration_start_ms
     type: uint32_t
+    restore_value: no
+    initial_value: '0'
+  - id: dry_run_fault
+    type: bool
+    restore_value: yes
+    initial_value: 'false'
+  - id: dry_run_fail_count
+    type: int
     restore_value: no
     initial_value: '0'
 
@@ -267,7 +275,41 @@ sensor:
     address: 0x010D
     register_type: holding
     name: "Hydro Status Raw"
+    internal: false
+    entity_category: diagnostic
+
+  # ── Flow signal mode (0x0323) ────────────────────────────────────────────
+  # 0=Standard (conduction), 1=Always ON, 2=Paddle switch, 3=Paddle AND std, 4=Paddle OR std
+  - id: flow_signal_mode_raw
+    platform: modbus_controller
+    address: 0x0323
+    register_type: holding
+    name: "Flow Signal Mode Raw"
+    force_new_range: true
     internal: true
+    on_value:
+      then:
+        - lambda: |-
+            int mode = (int)x;
+            switch (mode) {
+              case 0: id(flow_signal_mode_select).publish_state("Standard"); break;
+              case 1: id(flow_signal_mode_select).publish_state("Always ON"); break;
+              case 2: id(flow_signal_mode_select).publish_state("Paddle switch"); break;
+              case 3: id(flow_signal_mode_select).publish_state("Paddle AND Std"); break;
+              case 4: id(flow_signal_mode_select).publish_state("Paddle OR Std"); break;
+              default: id(flow_signal_mode_select).publish_state("Unknown"); break;
+            }
+
+  # ── Flow dependency / caudal config (0x0403) ────────────────────────────
+  # Bit 0 = FL1 controls outputs, bit 4 = paddle switch, bit 5 = inverted paddle.
+  - id: hidro_ion_caudal_raw
+    platform: modbus_controller
+    address: 0x0403
+    register_type: holding
+    name: "Hydro Ion Caudal Raw"
+    force_new_range: true
+    internal: false
+    entity_category: diagnostic
 
   - id: relay_state_raw
     platform: modbus_controller
@@ -336,6 +378,15 @@ sensor:
       then:
         - lambda: |-
             id(manual_filtration).publish_state(x == 1.0f);
+
+  - id: filtration_state_raw
+    platform: modbus_controller
+    address: 0x0421
+    register_type: holding
+    name: "Filtration State Raw"
+    force_new_range: true
+    internal: false
+    entity_category: diagnostic
 
   # ── USER page setpoint raw registers (0x05xx) ───────────────────────────
   - id: hidro_setpoint_raw
@@ -652,6 +703,12 @@ text_sensor:
       if (id(hidro_low_flow).state) {
         if (!errors.empty()) errors += ", "; errors += "Low flow";
       }
+      if (id(ph_flow_blocked).state) {
+        if (!errors.empty()) errors += ", "; errors += "pH flow blocked";
+      }
+      if (id(dry_run_fault)) {
+        if (!errors.empty()) errors += ", "; errors += "⚠ DRY RUN";
+      }
       if ((int(id(rx_status_raw).state) & 0x8000) == 0) {
         if (!errors.empty()) errors += ", "; errors += "Redox module missing";
       }
@@ -815,6 +872,20 @@ binary_sensor:
     entity_category: diagnostic
     lambda: return (int(id(ph_status_raw).state) & 0x1000) != 0;
 
+  - id: ph_flow_blocked
+    platform: template
+    name: "pH Flow Blocked"
+    device_class: problem
+    filters:
+      - delayed_on: 30s
+    lambda: |-
+      // pH Flow1 icon: Tasmota shows it when MBF_PH_STATUS bit 0x0400 is 0.
+      if (!id(filtration_pump_running).state) return false;
+      int ph_status = (int)id(ph_status_raw).state;
+      bool ph_module_present = (ph_status & 0x8000) != 0 || (ph_status & 0x4000) != 0;
+      if (!ph_module_present) return false;
+      return (ph_status & 0x0400) == 0;
+
   # ── Hydrolysis status bits (register 0x010D) ──────────────────────────────
   - id: hidro_on_target
     platform: template
@@ -828,14 +899,18 @@ binary_sensor:
     device_class: problem
     filters:
       - delayed_on: 60s
-    lambda: return (int(id(hidro_status_raw).state) & 0x0002) != 0;
+    lambda: |-
+      // FL1 bit (0x0008): 1 = flow OK, 0 = no flow (paddle switch)
+      // Only report no-flow when pump is actually running
+      if (!id(filtration_pump_running).state) return false;
+      return (int(id(hidro_status_raw).state) & 0x0008) == 0;
 
   - id: hidro_module_active
     platform: template
     name: "Hydrolysis Module Active"
     device_class: running
     entity_category: diagnostic
-    lambda: return (int(id(hidro_status_raw).state) & 0x0200) != 0;
+    lambda: return (int(id(hidro_status_raw).state) & 0x0020) != 0;
 
   - id: boost_mode
     platform: template
@@ -867,6 +942,8 @@ binary_sensor:
         }
       }
       if (id(hidro_low_flow).state) return true;
+      if (id(ph_flow_blocked).state) return true;
+      if (id(dry_run_fault)) return true;
       if ((int(id(rx_status_raw).state) & 0x8000) == 0) return true;
       return false;
 
@@ -875,15 +952,28 @@ binary_sensor:
   # Bit 3 = AUX1, Bit 4 = AUX2, Bit 5 = AUX3, Bit 6 = AUX4
   # Light relay bit depends on MBF_PAR_LIGHTING_GPIO assignment on your device.
 
+  - id: dry_run_detected
+    platform: template
+    name: "Dry Run Detected"
+    device_class: problem
+    icon: mdi:water-off
+    lambda: return id(dry_run_fault);
+
   - id: filtration_pump_running
     platform: template
     name: "Filtration Pump"
     device_class: running
-    lambda: return (int(id(relay_state_raw).state) & 0x0002) != 0;
+    lambda: |-
+      if (!std::isnan(id(filtration_state_raw).state)) return (int)id(filtration_state_raw).state == 1;
+      return (int(id(relay_state_raw).state) & 0x0002) != 0;
     on_press:
       then:
         - lambda: |-
             id(filtration_start_ms) = millis();
+        - script.execute: dry_run_watchdog
+    on_release:
+      then:
+        - script.stop: dry_run_watchdog
 
   - id: ph_pump_running
     platform: template
@@ -1073,6 +1163,40 @@ select:
   # Filtration mode (MBF_PAR_FILT_MODE, 0x0411)
   # 0=Manual, 1=Auto, 2=Heating
   # Must send EXEC (0x02F5) after write for the device to accept the change.
+  # Flow Signal Mode (MBF_PAR_HIDRO_FLOW_SIGNAL, 0x0323)
+  # 0=Standard, 1=Always ON, 2=Paddle switch, 3=Paddle AND Std, 4=Paddle OR Std
+  - platform: template
+    id: flow_signal_mode_select
+    name: "Flow Signal Mode"
+    icon: mdi:waves-arrow-right
+    entity_category: config
+    options:
+      - "Standard"
+      - "Always ON"
+      - "Paddle switch"
+      - "Paddle AND Std"
+      - "Paddle OR Std"
+    set_action:
+      - lambda: |-
+          uint16_t val = 0;
+          if (x == "Standard") val = 0;
+          else if (x == "Always ON") val = 1;
+          else if (x == "Paddle switch") val = 2;
+          else if (x == "Paddle AND Std") val = 3;
+          else if (x == "Paddle OR Std") val = 4;
+          id(flow_signal_mode_select).publish_state(x);
+          auto *c = id(neopool);
+          c->queue_command(esphome::modbus_controller::ModbusCommandItem::create_write_multiple_command(c, 0x0323, 1, {val}));
+      - delay: 1s
+      - lambda: |-
+          auto *c = id(neopool);
+          c->queue_command(esphome::modbus_controller::ModbusCommandItem::create_write_multiple_command(c, 0x02F0, 1, {(uint16_t)1}));
+      - delay: 1s
+      - lambda: |-
+          auto *c = id(neopool);
+          c->queue_command(esphome::modbus_controller::ModbusCommandItem::create_write_multiple_command(c, 0x02F5, 1, {(uint16_t)1}));
+      - script.execute: refresh_after_change
+
   - platform: template
     id: filtration_mode_select
     name: "Filtration Mode Select"
@@ -1219,12 +1343,15 @@ button:
   #         c->queue_command(esphome::modbus_controller::ModbusCommandItem::create_write_multiple_command(c, 0x02F5, 1, {(uint16_t)1}));
 
   # Clear Errors – write to MBF_ESCAPE (0x0297) = same as pressing ESC on device screen.
+  # Also resets dry-run fault flag.
   - platform: template
     name: "Clear Errors"
     icon: mdi:reload-alert
     entity_category: config
     on_press:
       - lambda: |-
+          id(dry_run_fault) = false;
+          id(dry_run_fail_count) = 0;
           id(neopool)->queue_command(
               esphome::modbus_controller::ModbusCommandItem::create_write_multiple_command(
                   id(neopool), 0x0297, 1, {(uint16_t)1}));
@@ -1290,6 +1417,9 @@ script:
           // 0x0411–0x0413: filt_mode, filt_gpio, filt_manual_state
           c->queue_command(esphome::modbus_controller::ModbusCommandItem::create_read_command(
               c, esphome::modbus_controller::ModbusRegisterType::HOLDING, 0x0411, 3));
+          // 0x0323: flow signal mode
+          c->queue_command(esphome::modbus_controller::ModbusCommandItem::create_read_command(
+              c, esphome::modbus_controller::ModbusRegisterType::HOLDING, 0x0323, 1));
 
   - id: antifrost_cycle
     mode: single
@@ -1357,6 +1487,56 @@ script:
                 tag: antifrost
                 format: "Pump OFF phase done, waiting 15 min..."
             - delay: 15min
+
+  # ── Dry-run watchdog ────────────────────────────────────────────────────
+  # After pump starts, waits 30s for startup, then checks flow every 30s.
+  # If no flow (FL1=0) persists for 3 consecutive checks → shuts pump down after ~90s total.
+  # Uses paddle switch (FL1) - works independently of electrolysis.
+  - id: dry_run_watchdog
+    mode: restart
+    then:
+      - lambda: id(dry_run_fail_count) = 0;
+      - delay: 30s
+      - while:
+          condition:
+            - binary_sensor.is_on: filtration_pump_running
+          then:
+            - lambda: |-
+                // Hydrolysis FL1 bit (0x010D/0x0008): 1 = flow OK, 0 = no flow.
+                // pH Flow1 icon uses 0x0107/0x0400 inverted: 0 = no flow shown on display.
+                int hydro_status = (int)id(hidro_status_raw).state;
+                int ph_status = (int)id(ph_status_raw).state;
+                bool hydro_no_flow = (hydro_status & 0x0008) == 0;
+                bool ph_module_present = (ph_status & 0x8000) != 0 || (ph_status & 0x4000) != 0;
+                bool ph_no_flow = ph_module_present && ((ph_status & 0x0400) == 0);
+                bool no_flow = hydro_no_flow || ph_no_flow;
+                if (no_flow) {
+                  id(dry_run_fail_count) += 1;
+                  ESP_LOGW("dryrun", "Low flow check FAIL #%d/3 (hydro=%d, ph=%d)", id(dry_run_fail_count), hydro_no_flow, ph_no_flow);
+                  if (id(dry_run_fail_count) >= 3) {
+                    ESP_LOGE("dryrun", "DRY RUN DETECTED! Shutting pump down.");
+                    id(dry_run_fault) = true;
+                    // Force pump OFF: Manual mode + pump off + EXEC
+                    auto *c = id(neopool);
+                    c->queue_command(esphome::modbus_controller::ModbusCommandItem::create_write_multiple_command(c, 0x0411, 1, {(uint16_t)0}));
+                    c->queue_command(esphome::modbus_controller::ModbusCommandItem::create_write_multiple_command(c, 0x02F5, 1, {(uint16_t)1}));
+                  }
+                } else {
+                  if (id(dry_run_fail_count) > 0) ESP_LOGI("dryrun", "Flow OK, reset counter");
+                  id(dry_run_fail_count) = 0;
+                }
+            - if:
+                condition:
+                  - lambda: return id(dry_run_fault);
+                then:
+                  - delay: 1s
+                  - lambda: |-
+                      auto *c = id(neopool);
+                      c->queue_command(esphome::modbus_controller::ModbusCommandItem::create_write_multiple_command(c, 0x0413, 1, {(uint16_t)0}));
+                      c->queue_command(esphome::modbus_controller::ModbusCommandItem::create_write_multiple_command(c, 0x02F5, 1, {(uint16_t)1}));
+                  - script.execute: refresh_after_change
+                  - script.stop: dry_run_watchdog
+            - delay: 30s
 
   - id: sync_device_time
     mode: single
