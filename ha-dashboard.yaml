@@ -1905,10 +1905,6 @@ views:
                       - width: calc(100% - 32px)
                   grid:
                     - padding-bottom: 35px
-            view_layout:
-              grid-column: 1
-          - type: vertical-stack
-            cards:
               # ── Roleta kuchyň ──
               - type: custom:button-card
                 entity: cover.kuchyn_roleta_roleta
@@ -1963,6 +1959,10 @@ views:
                       - width: calc(100% - 32px)
                   grid:
                     - padding-bottom: 35px
+            view_layout:
+              grid-column: 1
+          - type: vertical-stack
+            cards:
               # ── Garážová vrata ──
               - type: custom:button-card
                 entity: binary_sensor.garazove_vrata_door_state
@@ -2013,6 +2013,56 @@ views:
                     icon: mdi:garage-open-variant
                   - value: 'off'
                     icon: mdi:garage-variant
+              # ── Vrata Šopka Jitka ──
+              - type: custom:button-card
+                entity: binary_sensor.vrata_do_sopy_door_state
+                name: Vrata Šopka Jitka
+                show_name: true
+                show_state: false
+                show_icon: true
+                show_label: true
+                layout: icon_label
+                tap_action:
+                  action: call-service
+                  service: script.turn_on
+                  service_data:
+                    entity_id: script.sopka_door_secure_trigger
+                  confirmation:
+                    text: Opravdu chcete otevřít/zavřít vrata Šopka Jitka?
+                hold_action:
+                  action: more-info
+                label: |
+                  [[[
+                    const open = entity.state === 'on';
+                    const stavText = open ? 'Otevřeno' : 'Zavřeno';
+                    const stavColor = open ? '#4caf50' : '#9e9e9e';
+                    return `<div style="line-height:1.3">
+                      <div style="font-size:26px;font-weight:bold;color:${stavColor}">${stavText}</div>
+                      <div style="font-size:11px;color:var(--secondary-text-color);margin-top:4px">Klepněte pro otevření/zavření</div>
+                    </div>`;
+                  ]]]
+                styles:
+                  card:
+                    - height: 140px
+                    - background: |
+                        [[[
+                          if (entity.state === 'on') return 'linear-gradient(135deg, rgba(76,175,80,0.15) 0%, rgba(76,175,80,0.03) 100%)';
+                          return 'var(--card-background-color)';
+                        ]]]
+                  icon:
+                    - width: 56px
+                    - color: |
+                        [[[
+                          return entity.state === 'on' ? '#4caf50' : '#9e9e9e';
+                        ]]]
+                  label:
+                    - text-align: left
+                    - padding: 0
+                state:
+                  - value: 'on'
+                    icon: mdi:gate-open
+                  - value: 'off'
+                    icon: mdi:gate
             view_layout:
               grid-column: 2
   - type: panel
