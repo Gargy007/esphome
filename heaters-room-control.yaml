@@ -161,6 +161,9 @@ esp32:
       CONFIG_LWIP_TCP_WND_DEFAULT: "16384"
 
 # Enable logging
+# logger:
+  # level: DEBUG
+  # hardware_uart: USB_SERIAL_JTAG
 logger:
   level: INFO
   baud_rate: 0  # Disable UART0 logging - GPIO20 (RX) used for OneWire, GPIO21 (TX) for pulse_meter
@@ -174,15 +177,7 @@ api:
   id: kotelna_api
   encryption:
     key: !secret api_encryption_heaters
-  reboot_timeout: 5min  # Max. 5 minut bez Home Assistant API, potom restart
-  actions:
-    - action: ha_watchdog_ping
-      then:
-        - lambda: |-
-            id(ha_watchdog_posledni_ping) = millis();
-            id(ha_watchdog_aktivni) = true;
-            id(ha_watchdog_counter) += 1;
-            id(watchdog_counter_sensor).publish_state(id(ha_watchdog_counter));
+  reboot_timeout: 5min
 
 ota:
   - platform: esphome
@@ -193,7 +188,7 @@ wifi:
   ssid: !secret wifi_ssid
   password: !secret wifi_password
   power_save_mode: none
-  reboot_timeout: 5min  # Max. 5 minut bez WiFi, potom restart
+  reboot_timeout: 5min
   manual_ip:
     static_ip: 192.168.1.113
     gateway: 192.168.1.1
@@ -371,28 +366,6 @@ globals:
     restore_value: no
     initial_value: '0'
 
-  # HA watchdog - periodický ping z Home Assistantu pro detekci zaseklé logiky
-  - id: ha_watchdog_posledni_ping
-    type: unsigned long
-    restore_value: no
-    initial_value: '0'
-
-  - id: ha_watchdog_aktivni
-    type: bool
-    restore_value: no
-    initial_value: 'false'
-
-  - id: ha_watchdog_counter
-    type: int
-    restore_value: no
-    initial_value: '0'
-
-  # HA watchdog - havárie po 5 minutách bez pingu
-  - id: ha_watchdog_5min_timeout_aktivni
-    type: bool
-    restore_value: no
-    initial_value: 'false'
-
   # ============ PLYNOVÝ KOTEL - stavy a monitorování ============
   - id: plyn_povolen
     type: bool
@@ -430,15 +403,6 @@ globals:
     initial_value: 'false'
 
 sensor:
-  # Smart Watchdog Counter - HA monitoruje zda se mění
-  - platform: template
-    name: "Watchdog Counter"
-    id: watchdog_counter_sensor
-    update_interval: never
-    accuracy_decimals: 0
-    icon: "mdi:counter"
-    entity_category: diagnostic
-
   # WiFi signál
   - platform: wifi_signal
     name: "WiFi: RSSI"
@@ -674,25 +638,6 @@ sensor:
     lambda: |-
       return id(kalibrace_koeficient);
     # internal: true
-
-  - platform: template
-    name: "Systém: Watchdog bez pingu"
-    id: ha_watchdog_bez_pingu
-    unit_of_measurement: "min"
-    accuracy_decimals: 1
-    update_interval: 30s
-    icon: "mdi:timer-alert"
-    entity_category: diagnostic
-    lambda: |-
-      if (!id(ha_watchdog_aktivni) || id(ha_watchdog_posledni_ping) == 0) {
-        return 0.0;
-      }
-      unsigned long now = millis();
-      unsigned long elapsed = (now >= id(ha_watchdog_posledni_ping))
-        ? (now - id(ha_watchdog_posledni_ping))
-        : now;
-      return elapsed / 60000.0;
-    internal: true
 
 # ============================================================================
 # NASTAVENÍ (ovladatelné z Home Assistant)
@@ -1057,8 +1002,7 @@ binary_sensor:
              !id(kotelna_wifi).is_connected() ||
              !id(kotelna_api).is_connected() ||
              id(plyn_havarie_aktivni) || 
-             id(voda_havarie_aktivni) ||
-             id(ha_watchdog_5min_timeout_aktivni);
+             id(voda_havarie_aktivni);
 
   # --- Diagnostika (skrytá v HA, viditelná jen v diagnostickém panelu) ---
   - platform: template
@@ -1238,57 +1182,6 @@ interval:
             id(voda_celkovy_prutok_posledni_ulozeni) = now;
           }
 
-  # HA watchdog - pokud HA neposle ping do 10 minut, proved fail-safe a restart
-  - interval: 30s
-    then:
-      - lambda: |-
-          const unsigned long WATCHDOG_TIMEOUT_MS = 10UL * 60UL * 1000UL;
-          if (!id(ha_watchdog_aktivni) || id(ha_watchdog_posledni_ping) == 0) {
-            return;
-          }
-
-          unsigned long now = millis();
-          unsigned long elapsed = (now >= id(ha_watchdog_posledni_ping))
-            ? (now - id(ha_watchdog_posledni_ping))
-            : now;
-
-          if (elapsed < WATCHDOG_TIMEOUT_MS) {
-            return;
-          }
-
-          ESP_LOGE("system", "HA watchdog timeout: %.1f min bez pingu - provadim fail-safe restart", elapsed / 60000.0);
-          id(plyn_povolen) = false;
-      - script.execute:
-          id: sync_plyn_relay
-          reason: "HA_watchdog_timeout"
-      - lambda: |-
-          id(plyn_stav).publish_state("Watchdog timeout - restart");
-          delay(500);
-          App.safe_reboot();
-
-  # HA watchdog - havárie po 5 minutách bez pingu (před restartem)
-  - interval: 30s
-    then:
-      - lambda: |-
-          const unsigned long WATCHDOG_5MIN_MS = 5UL * 60UL * 1000UL;
-          if (!id(ha_watchdog_aktivni) || id(ha_watchdog_posledni_ping) == 0) {
-            return;
-          }
-
-          unsigned long now = millis();
-          unsigned long elapsed = (now >= id(ha_watchdog_posledni_ping))
-            ? (now - id(ha_watchdog_posledni_ping))
-            : now;
-
-          if (elapsed >= WATCHDOG_5MIN_MS && !id(ha_watchdog_5min_timeout_aktivni)) {
-            ESP_LOGE("system", "HA watchdog 5min timeout: %.1f min bez pingu - warning!", elapsed / 60000.0);
-            id(ha_watchdog_5min_timeout_aktivni) = true;
-            id(switch_led_red).turn_off();  // Rozsvítit error LED (inverted) - jen warning!
-          } else if (elapsed < WATCHDOG_5MIN_MS && id(ha_watchdog_5min_timeout_aktivni)) {
-            // Reset havárie když ping znovu přijde
-            id(ha_watchdog_5min_timeout_aktivni) = false;
-            id(switch_led_red).turn_on();
-          }
   # Hlavní regulační logika kotel - každých 10 sekund
   - interval: 10s
     then:
@@ -2091,9 +1984,8 @@ display:
       else if (id(display_page) == 4) {
         const bool wifi_connected = id(kotelna_wifi).is_connected();
         const bool api_connected = id(kotelna_api).is_connected();
-        const bool watchdog_ok = !id(ha_watchdog_5min_timeout_aktivni);
         it.printf(64, 0, id(font_medium), COLOR_OFF, TextAlign::TOP_CENTER,
-                  (!wifi_connected || !api_connected || !watchdog_ok) ? "!!SYSTEM!!" : "SYSTEM");
+                  (!wifi_connected || !api_connected) ? "!!SYSTEM!!" : "SYSTEM");
 
         it.printf(2, 16, id(font_small), "WiFi:");
         it.printf(126, 16, id(font_small), TextAlign::TOP_RIGHT,
@@ -2103,18 +1995,12 @@ display:
         it.printf(126, 26, id(font_small), TextAlign::TOP_RIGHT,
                   api_connected ? "CONNECTED" : "ODPOJENO");
 
-        it.printf(2, 36, id(font_small), "Watchdog:");
-        if (!isnan(id(ha_watchdog_bez_pingu).state)) {
-          it.printf(126, 36, id(font_small), TextAlign::TOP_RIGHT, "%.1f min", id(ha_watchdog_bez_pingu).state);
-        } else {
-          it.printf(126, 36, id(font_small), TextAlign::TOP_RIGHT, "OK");
-        }
-
-        if (!watchdog_ok) {
-          it.printf(2, 46, id(font_small), "WATCHDOG TIMEOUT!");
-        } else if (!wifi_connected || !api_connected) {
+        it.printf(2, 36, id(font_small), "Status:");
+        if (!wifi_connected || !api_connected) {
+          it.printf(126, 36, id(font_small), TextAlign::TOP_RIGHT, "CHYBA");
           it.printf(2, 46, id(font_small), "Sit/HA chyba");
         } else {
+          it.printf(126, 36, id(font_small), TextAlign::TOP_RIGHT, "OK");
           it.printf(2, 46, id(font_small), "Vše OK");
         }
       }
