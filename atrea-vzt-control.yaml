@@ -201,9 +201,13 @@ globals:
     type: bool
     restore_value: no
     initial_value: 'false'
+  - id: flag_chlazeni_active
+    type: bool
+    restore_value: no
+    initial_value: 'false'
   # Pro detekci změny stavu (bitová maska)
   - id: last_state_hash
-    type: uint8_t
+    type: uint16_t
     restore_value: no
     initial_value: '0'
   # ===== FROST PROTECTION (Zamrazovací ochrana) =====
@@ -616,6 +620,7 @@ switch:
       - logger.log:
           format: "🔥 TOPENÍ: Zapnuto"
           level: INFO
+      - switch.turn_off: switch_chlazeni_on
       - script.execute: rk2_manager
     on_turn_off: 
       - logger.log:
@@ -632,6 +637,7 @@ switch:
       - logger.log:
           format: "⚡ TOPENÍ TURBO: Zapnuto"
           level: INFO
+      - switch.turn_off: switch_chlazeni_on
       - script.execute: rk2_manager
     on_turn_off: 
       - logger.log:
@@ -653,7 +659,43 @@ switch:
       - logger.log:
           format: "☀️ LETNÍ REŽIM: Vypnut"
           level: INFO
-      - switch.turn_off: switch_rele_klapka_bypass
+      - if:
+          condition:
+            lambda: 'return id(flag_chlazeni_active);'
+          then:
+            - logger.log:
+                format: "☀️ LETNÍ REŽIM: Požadavek uložen, bypass zůstává zapnutý kvůli chlazení"
+                level: INFO
+          else:
+            - switch.turn_off: switch_rele_klapka_bypass
+
+  - platform: template
+    name: "VZT - Chlazení aktivní"
+    id: switch_chlazeni_on
+    optimistic: true
+    icon: mdi:snowflake
+    on_turn_on:
+      - logger.log:
+          format: "❄️ CHLAZENÍ: Zapnuto"
+          level: INFO
+      - switch.turn_off: switch_topeni_on
+      - switch.turn_off: switch_topeni_turbo
+      - globals.set: {id: flag_chlazeni_active, value: 'true'}
+      - switch.turn_on: switch_rele_klapka_bypass
+      - script.execute: rk2_manager
+    on_turn_off:
+      - logger.log:
+          format: "❄️ CHLAZENÍ: Vypnuto"
+          level: INFO
+      - globals.set: {id: flag_chlazeni_active, value: 'false'}
+      - if:
+          condition:
+            switch.is_on: switch_letni_rezim
+          then:
+            - switch.turn_on: switch_rele_klapka_bypass
+          else:
+            - switch.turn_off: switch_rele_klapka_bypass
+      - script.execute: rk2_manager
 
   - platform: template
     name: "Topení - radiátory"
@@ -875,11 +917,12 @@ text_sensor:
       bool boost = id(flag_kuchyn_active) || id(flag_ha_active) || id(flag_koupelna_active) || id(flag_wc_prizemi_active) || id(flag_wc_patro_active);
       bool topeni = id(switch_topeni_on).state;
       bool turbo = id(switch_topeni_turbo).state;
+      bool chlazeni = id(flag_chlazeni_active);
       bool profuk = id(flag_profuk_active);
       bool radiatory = id(flag_topeni_radiatory_active);
       bool frost_protection = id(flag_frost_protection_active);
 
-      uint8_t current_hash = 0;
+      uint16_t current_hash = 0;
       current_hash |= (boost ? 1 : 0) << 0;
       current_hash |= (topeni ? 1 : 0) << 1;
       current_hash |= (profuk ? 1 : 0) << 2;
@@ -888,10 +931,11 @@ text_sensor:
       current_hash |= (id(flag_koupelna_active) ? 1 : 0) << 5;
       current_hash |= (id(flag_kuchyn_active) ? 1 : 0) << 6;
       current_hash |= (id(flag_ha_active) ? 1 : 0) << 7;
+      current_hash |= (chlazeni ? 1 : 0) << 8;
 
       if (current_hash != id(last_state_hash)) {
-        ESP_LOGI("STATE_CHANGE", "boost=%d, topeni=%d, turbo=%d, profuk=%d, frost=%d | WC_priz=%d, WC_pat=%d, Koup=%d, Kuch=%d, HA_ext=%d", 
-          boost, topeni, turbo, profuk, frost_protection,
+        ESP_LOGI("STATE_CHANGE", "boost=%d, topeni=%d, turbo=%d, chlazeni=%d, profuk=%d, frost=%d | WC_priz=%d, WC_pat=%d, Koup=%d, Kuch=%d, HA_ext=%d", 
+          boost, topeni, turbo, chlazeni, profuk, frost_protection,
           id(flag_wc_prizemi_active), id(flag_wc_patro_active), id(flag_koupelna_active), 
           id(flag_kuchyn_active), id(flag_ha_active));
         id(last_state_hash) = current_hash;
@@ -918,6 +962,9 @@ text_sensor:
           return std::string(radiatory ? "Větrání + radiátory" : "Větrání");
         }
       } 
+      else if (chlazeni) {
+        return std::string("Chlazení");
+      }
       else if (profuk) {
         // PROFUK (periodické větrání)
         if (topeni) {
@@ -1141,6 +1188,7 @@ script:
           bool boost = boost_kuchyn || boost_ha || boost_koupelna || boost_wc_prizemi || boost_wc_patro;
           bool topeni = id(switch_topeni_on).state;
           bool turbo = id(switch_topeni_turbo).state;
+          bool chlazeni = id(flag_chlazeni_active);
           bool profuk = id(flag_profuk_active);
           bool radiatory = id(flag_topeni_radiatory_active);
 
@@ -1161,6 +1209,10 @@ script:
               dac = 1.0; vet_mode = 2; cirk_mode = 0;  // HIGH + OFF
               mode = radiatory ? "BOOST + radiátory" : "BOOST";
             }
+          } else if (chlazeni) {
+            // CHLAZENÍ: Letní větrání bez rekuperace a bez cirkulace
+            dac = 1.0; vet_mode = 1; cirk_mode = 0;  // LOW + OFF
+            mode = "CHLAZENÍ";
           } else if (profuk) {
             // PERIODICKÉ VĚTRÁNÍ: Běh naplánovaného větrání (bez boost)
             if (topeni) { 
@@ -1256,6 +1308,10 @@ script:
             id(switch_rele_el_ventil_topeni_vzt).turn_on();
           } else {
             id(switch_rele_el_ventil_topeni_vzt).turn_off();
+          }
+
+          if (chlazeni) {
+            id(switch_rele_klapka_bypass).turn_on();
           }
       # ========================================================================
       # ZONOVÉ VĚTRÁNÍ - Automatické řízení klapek
@@ -1504,7 +1560,7 @@ script:
                     !id(flag_wc_patro_active);
           then:
             - logger.log:
-                format: "✅ Všechny požadavky vypnuty - přechod do klidového režimu"
+                format: "✅ Všechny nárazové požadavky vypnuty - návrat do základního režimu"
                 level: INFO
             - script.stop: script_safety_watchdog
             - script.execute: rk2_manager
@@ -1769,8 +1825,9 @@ interval:
               bool boost = id(flag_kuchyn_active) || id(flag_ha_active) || 
                           id(flag_koupelna_active) || id(flag_wc_prizemi_active) || 
                           id(flag_wc_patro_active);
+              bool chlazeni = id(flag_chlazeni_active);
               bool time_elapsed = (id(sntp_time).now().timestamp - id(last_ventilation_unix)) > 3600;
-              return !boost && time_elapsed;
+              return !boost && !chlazeni && time_elapsed;
           then: 
             - script.execute: script_periodic_ventilation
 
