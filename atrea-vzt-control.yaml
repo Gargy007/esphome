@@ -376,7 +376,29 @@ sensor:
     lambda: |-
       return id(dac_current_level) * 100.0;
 
+  - platform: homeassistant
+    id: ha_vzt_cooling_inside_temp
+    entity_id: sensor.ws3900a_indoor_temperature
+    internal: true
+  - platform: homeassistant
+    id: ha_vzt_cooling_outside_temp
+    entity_id: sensor.ws3900a_outdoor_temperature
+    internal: true
+  - platform: homeassistant
+    id: ha_vzt_cooling_min_inside_temp
+    entity_id: input_number.vzt_chlazeni_min_vnitrni_teplota
+    internal: true
+  - platform: homeassistant
+    id: ha_vzt_cooling_min_delta
+    entity_id: input_number.vzt_chlazeni_min_rozdil_teplot
+    internal: true
+
 binary_sensor:
+  - platform: homeassistant
+    id: ha_vzt_cooling_auto_allowed
+    entity_id: input_boolean.vzt_automaticke_chlazeni_povoleno
+    internal: true
+
   # ============================================================================
   # VSTUPNÍ SENZORY - Každý má vlastní oddělené scripty
   # ============================================================================
@@ -682,8 +704,9 @@ switch:
   - platform: template
     name: "VZT - Chlazení aktivní"
     id: switch_chlazeni_on
-    optimistic: true
     icon: mdi:snowflake
+    lambda: |-
+      return id(flag_chlazeni_active);
     on_turn_on:
       - logger.log:
           format: "❄️ CHLAZENÍ: Zapnuto"
@@ -1821,6 +1844,43 @@ interval:
               return false;
           then:
             - script.execute: script_frost_protection_off
+
+  - interval: 10s
+    then:
+      - if:
+          condition:
+            lambda: |-
+              if (!id(flag_chlazeni_active)) {
+                return false;
+              }
+
+              if (id(ha_vzt_cooling_auto_allowed).has_state() && !id(ha_vzt_cooling_auto_allowed).state) {
+                ESP_LOGW("CHLAZENI", "Automatika je v HA vypnuta - vypinam chlazeni");
+                return true;
+              }
+
+              if (!id(ha_vzt_cooling_inside_temp).has_state() || !id(ha_vzt_cooling_outside_temp).has_state()) {
+                return false;
+              }
+
+              float inside = id(ha_vzt_cooling_inside_temp).state;
+              float outside = id(ha_vzt_cooling_outside_temp).state;
+              float min_inside = id(ha_vzt_cooling_min_inside_temp).has_state() ? id(ha_vzt_cooling_min_inside_temp).state : 25.0f;
+              float min_delta = id(ha_vzt_cooling_min_delta).has_state() ? id(ha_vzt_cooling_min_delta).state : 1.0f;
+
+              if (std::isnan(inside) || std::isnan(outside) || std::isnan(min_inside) || std::isnan(min_delta)) {
+                return false;
+              }
+
+              float delta = inside - outside;
+              if (inside < min_inside || delta < min_delta) {
+                ESP_LOGW("CHLAZENI", "Podminky nesplneny: uvnitr %.1f / venku %.1f / rozdil %.1f / minimum %.1f / min rozdil %.1f - vypinam chlazeni", inside, outside, delta, min_inside, min_delta);
+                return true;
+              }
+
+              return false;
+          then:
+            - switch.turn_off: switch_chlazeni_on
 
   # Periodická kontrola - spouští větrání každou hodinu, pokud neběželo dlouhodobě
   # (více než 1 hodina bez větrání)
