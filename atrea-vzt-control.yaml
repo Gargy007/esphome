@@ -9,6 +9,10 @@
 # ║  • 4x senzory požadavků na větrání (GPIO) - WC, Koupelna, Kuchyň               ║
 # ║  • Periodické větrání (2-20 minut, nastavitelné, pokud není aktivní boost)     ║
 # ║  • Topení radiátorů v koupelně (bez VZT systému)                               ║
+# ║  • Chlazení domu - letní větrání bez rekuperace, řízené z Home Assistant       ║
+# ║      • Větrá celý dům na malý výkon bez cirkulace a bez topení                 ║
+# ║      • Dočasně vynutí bypass a po vypnutí obnoví ruční stav letního režimu     ║
+# ║      • Nárazové větrání WC/Koupelna/Kuchyň má přednost a po doběhu se vrátí    ║
 # ║  • Tepelné senzory pro diagnostiku (Dallas 1-Wire)                             ║
 # ║  • Monitoring tlaku na filtru (ADC)                                            ║
 # ║  • Watchdog bezpečnosti (2 hodiny timeout)                                     ║
@@ -27,7 +31,7 @@
 # ║  • 0.0 = Pouze cirkulace (bez větrání) - TOPENÍ VZT ONLY                       ║
 # ║  • 0.5 = Malé větrání + cirkulace - PERIODICKÉ VĚTRÁNÍ (PROFUK)                ║
 # ║  • 0.8 = Velké větrání + cirkulace - BOOST + TOPENÍ VZT                        ║
-# ║  • 1.0 = Velké větrání bez cirkulace - BOOST ONLY                              ║
+# ║  • 1.0 = Větrání bez cirkulace - BOOST / PROFUK / CHLAZENÍ                     ║
 # ║                                                                                ║
 # ║  MOTORŮ ŘÍZENÍ (XL9535 relé):                                                  ║
 # ║  • Větrací ventilátor (relé 8,7,6):                                            ║
@@ -47,6 +51,7 @@
 # ║  • vzt_koupelna (GPIO42) - Požadavek na větrání Koupelny                       ║
 # ║  • vzt_kuchyn (GPIO39) - Požadavek na větrání Kuchyně                          ║
 # ║  • switch_ha_externi - Externí požadavek z Home Assistant                      ║
+# ║  • switch_chlazeni_on - Aktivace chlazení z Home Assistant                     ║
 # ║  • switch_topeni_radiatory - Aktivace topení radiátorů (samostatné od VZT)     ║
 # ║  • Teplota - Rekuperace - Výstup z domu (Dallas sensor pro mraz-ochranu)       ║
 # ║                                                                                ║
@@ -73,6 +78,7 @@
 # | **BOOST**                  | 1.0  | VELKÝ VÝKON   | VYPNUTO         | OFF      | OFF        | dle switch |
 # | **BOOST + radiátory**      | 1.0  | VELKÝ VÝKON   | VYPNUTO         | ON       | OFF        | dle switch |
 # | **BOOST + TOPENÍ**         | 0.8  | VELKÝ VÝKON   | VELKÝ VÝKON     | ON       | ON         | dle switch |
+# | **CHLAZENÍ**               | 1.0  | MALÝ VÝKON    | VYPNUTO         | OFF      | OFF        | ON/dočasně |
 # | **PROFUK**                 | 1.0  | MALÝ VÝKON    | VYPNUTO         | OFF      | OFF        | dle switch |
 # | **PROFUK + radiátory**     | 1.0  | MALÝ VÝKON    | VYPNUTO         | ON       | OFF        | dle switch |
 # | **PROFUK + TOPENÍ**        | 0.5  | MALÝ VÝKON    | MALÝ VÝKON      | ON       | ON         | dle switch |
@@ -90,7 +96,7 @@
 # - **Relé 5,4,3**: XL9535 relé pro cirkulační motor (5=HIGH bit, 4=BOOST bit, 3=LOW bit)
 # - **Čerpadlo**: GPIO21 - Čerpadlo topení (ON = aktivní topení)
 # - **Ventil VZT**: GPIO48 - Elektromagnetický ventil topení VZT (ON = topení přes VZT)
-# - **Bypass**: GPIO47 - Klapka bypass (řízeno manuálně přes switch_letni_rezim)
+# - **Bypass**: GPIO47 - Klapka bypass (ručně přes switch_letni_rezim, při chlazení dočasně ON)
 #
 # **VÝKONOVÉ ÚROVNĚ CIRKULACE:**
 # - **MALÝ VÝKON**: Relé 5=OFF, 4=OFF, 3=ON  (základní topení)
@@ -98,14 +104,16 @@
 # - **BOOST VÝKON**: Relé 5=ON, 4=ON, 3=OFF  (maximální topení turbo režim)
 #
 # **POZNÁMKY:**
-# 1. Režim se určuje podle priorit: FROST > BOOST > PROFUK > TOPENÍ > KLID
+# 1. Režim se určuje podle priorit: FROST > BOOST > CHLAZENÍ > PROFUK > TOPENÍ > KLID
 # 2. BOOST má přednost před PROFUK (pokud je aktivní boost, profuk se nespustí)
-# 3. Radiátory = čerpadlo BEZ ventilu VZT (topení jen radiátorů, ne VZT)
-# 4. FROST PROTECTION = nucené topení cirkulací při T < 2°C, obnoví původní režim při T > 10°C
-# 5. Watchdog: Automatické vypnutí všech požadavků po 2 hodinách běhu
-# 6. ⚡ TURBO režim = BOOST výkon cirkulace (relé 5=ON + 4=ON) pro maximální topení
-# 7. BOOST + TOPENÍ = VELKÝ výkon cirkulace (relé 5=ON) pro topení s větráním
-# 8. TOPENÍ (bez větrání) = VELKÝ výkon cirkulace (relé 5=ON) pro efektivní samostatné topení
+# 3. Chlazení = letní větrání bez cirkulace; vynutí bypass ON a po vypnutí obnoví switch_letni_rezim
+# 4. Topení a chlazení se vzájemně vypínají; zapnutí topení ukončí chlazení a naopak
+# 5. Radiátory = čerpadlo BEZ ventilu VZT (topení jen radiátorů, ne VZT)
+# 6. FROST PROTECTION = nucené topení cirkulací při T < 2°C, obnoví původní režim při T > 10°C
+# 7. Watchdog: Automatické vypnutí nárazových požadavků po 2 hodinách běhu
+# 8. ⚡ TURBO režim = BOOST výkon cirkulace (relé 5=ON + 4=ON) pro maximální topení
+# 9. BOOST + TOPENÍ = VELKÝ výkon cirkulace (relé 5=ON) pro topení s větráním
+# 10. TOPENÍ (bez větrání) = VELKÝ výkon cirkulace (relé 5=ON) pro efektivní samostatné topení
 
 
 # ┌────────────────────────────────────────────────────────────────────────────────┐
@@ -119,6 +127,7 @@
 # | **WC patro**               | UZAVŘENA (ON)      | OTEVŘENA (OFF)     | 🏠 WC/Koupelna    |
 # | **Koupelna**               | UZAVŘENA (ON)      | OTEVŘENA (OFF)     | 🏠 WC/Koupelna    |
 # | **HA externí**             | UZAVŘENA (ON)      | OTEVŘENA (OFF)     | 🏠 WC/Koupelna    |
+# | **Chlazení**               | OTEVŘENA (OFF)     | OTEVŘENA (OFF)     | 🔀 Všechno        |
 # | **Profuk**                 | OTEVŘENA (OFF)     | OTEVŘENA (OFF)     | 🔀 Všechno        |
 # | **Kuchyň + WC/Koupelna**   | OTEVŘENA (OFF)     | OTEVŘENA (OFF)     | 🔀 Všechno        |
 # | **Klid (žádný požadavek)** | OTEVŘENA (OFF)     | OTEVŘENA (OFF)     | 🔀 Všechno        |
@@ -131,8 +140,9 @@
 # **POZNÁMKY:**
 # 1. Zonové větrání se řídí automaticky podle aktivních požadavků
 # 2. Při profuku se větrá celý dům (obě klapky otevřené)
-# 3. Při kombinaci požadavků se větrá celý dům (obě klapky otevřené)
-# 4. Default stav (klid) = obě klapky otevřené
+# 3. Při chlazení se větrá celý dům (obě klapky otevřené)
+# 4. Při kombinaci požadavků se větrá celý dům (obě klapky otevřené)
+# 5. Default stav (klid) = obě klapky otevřené
 
 
 esphome:
