@@ -10,7 +10,7 @@
 # ║  • Periodické větrání (2-20 minut, nastavitelné, pokud není aktivní boost)     ║
 # ║  • Topení radiátorů v koupelně (bez VZT systému)                               ║
 # ║  • Chlazení domu - letní větrání bez rekuperace, řízené z Home Assistant       ║
-# ║      • Větrá celý dům na malý výkon bez cirkulace a bez topení                 ║
+# ║      • Větrá celý dům nastavitelným výkonem bez cirkulace a bez topení         ║
 # ║      • Dočasně vynutí bypass a po vypnutí obnoví ruční stav letního režimu     ║
 # ║      • Nárazové větrání WC/Koupelna/Kuchyň má přednost a po doběhu se vrátí    ║
 # ║  • Tepelné senzory pro diagnostiku (Dallas 1-Wire)                             ║
@@ -78,7 +78,7 @@
 # | **BOOST**                  | 1.0  | VELKÝ VÝKON   | VYPNUTO         | OFF      | OFF        | dle switch |
 # | **BOOST + radiátory**      | 1.0  | VELKÝ VÝKON   | VYPNUTO         | ON       | OFF        | dle switch |
 # | **BOOST + TOPENÍ**         | 0.8  | VELKÝ VÝKON   | VELKÝ VÝKON     | ON       | ON         | dle switch |
-# | **CHLAZENÍ**               | 1.0  | MALÝ VÝKON    | VYPNUTO         | OFF      | OFF        | ON/dočasně |
+# | **CHLAZENÍ**               | 1.0  | NASTAVITELNÉ  | VYPNUTO         | OFF      | OFF        | ON/dočasně |
 # | **PROFUK**                 | 1.0  | MALÝ VÝKON    | VYPNUTO         | OFF      | OFF        | dle switch |
 # | **PROFUK + radiátory**     | 1.0  | MALÝ VÝKON    | VYPNUTO         | ON       | OFF        | dle switch |
 # | **PROFUK + TOPENÍ**        | 0.5  | MALÝ VÝKON    | MALÝ VÝKON      | ON       | ON         | dle switch |
@@ -106,7 +106,7 @@
 # **POZNÁMKY:**
 # 1. Režim se určuje podle priorit: FROST > BOOST > CHLAZENÍ > PROFUK > TOPENÍ > KLID
 # 2. BOOST má přednost před PROFUK (pokud je aktivní boost, profuk se nespustí)
-# 3. Chlazení = letní větrání bez cirkulace; vynutí bypass ON a po vypnutí obnoví switch_letni_rezim
+# 3. Chlazení = letní větrání bez cirkulace s nastavitelným výkonem ventilátoru; vynutí bypass ON a po vypnutí obnoví switch_letni_rezim
 # 4. Topení a chlazení se vzájemně vypínají; zapnutí topení ukončí chlazení a naopak
 # 5. Radiátory = čerpadlo BEZ ventilu VZT (topení jen radiátorů, ne VZT)
 # 6. FROST PROTECTION = nucené topení cirkulací při T < 2°C, obnoví původní režim při T > 10°C
@@ -1113,6 +1113,27 @@ number:
         - logger.log:
             format: "⚙️ Koupelna Doběh: %.0f s"
             args: ['x']
+
+  - platform: template
+    name: "VZT Chlazení - Výkon ventilátoru"
+    id: cooling_fan_power
+    min_value: 1
+    max_value: 3
+    step: 1
+    initial_value: 2
+    optimistic: true
+    restore_value: true
+    icon: mdi:fan-speed-2
+    on_value:
+      then:
+        - logger.log:
+            format: "❄️ Chlazení výkon ventilátoru: %.0f (1=malý, 2=velký, 3=boost)"
+            args: ['x']
+        - if:
+            condition:
+              lambda: 'return id(flag_chlazeni_active);'
+            then:
+              - script.execute: rk2_manager
   
   - platform: template
     name: "VZT Profuk - Délka trvání"
@@ -1244,7 +1265,12 @@ script:
             }
           } else if (chlazeni) {
             // CHLAZENÍ: Letní větrání bez rekuperace a bez cirkulace
-            dac = 1.0; vet_mode = 1; cirk_mode = 0;  // LOW + OFF
+            float cooling_power_state = id(cooling_fan_power).state;
+            int cooling_power = 2;
+            if (cooling_power_state >= 1.0f && cooling_power_state <= 3.0f) {
+              cooling_power = (int) (cooling_power_state + 0.5f);
+            }
+            dac = 1.0; vet_mode = cooling_power; cirk_mode = 0;  // Nastavitelný výkon + OFF
             mode = "CHLAZENÍ";
           } else if (profuk) {
             // PERIODICKÉ VĚTRÁNÍ: Běh naplánovaného větrání (bez boost)
