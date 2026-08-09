@@ -707,7 +707,7 @@ switch:
     icon: mdi:snowflake
     lambda: |-
       return id(flag_chlazeni_active);
-    on_turn_on:
+    turn_on_action:
       - logger.log:
           format: "❄️ CHLAZENÍ: Zapnuto"
           level: INFO
@@ -716,7 +716,7 @@ switch:
       - globals.set: {id: flag_chlazeni_active, value: 'true'}
       - switch.turn_on: switch_rele_klapka_bypass
       - script.execute: rk2_manager
-    on_turn_off:
+    turn_off_action:
       - logger.log:
           format: "❄️ CHLAZENÍ: Vypnuto"
           level: INFO
